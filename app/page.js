@@ -4430,7 +4430,7 @@ function AssignmentsPage({ user, onViewAsset }) {
                 {assignments.map(a => (
                   <TableRow key={a.id} className="cursor-pointer" onClick={() => onViewAsset(a.asset_id)}>
                     <TableCell className="font-medium">{a.asset_tag}</TableCell>
-                    <TableCell>{a.asset_category}</TableCell>
+                    <TableCell>{a.asset_category || '-'}</TableCell>
                     <TableCell>{a.employee_name}</TableCell>
                     <TableCell>{a.assigned_date}</TableCell>
                     <TableCell><Badge variant="outline">{a.assignment_type}</Badge></TableCell>
@@ -4450,7 +4450,7 @@ function AssignmentsPage({ user, onViewAsset }) {
                 {unassignedAssets.map(a => (
                   <TableRow key={a.id}>
                     <TableCell className="font-medium">{a.asset_tag}</TableCell>
-                    <TableCell>{a.category}</TableCell>
+                    <TableCell>{a.category_name || a.category || '-'}</TableCell>
                     <TableCell>{a.brand}</TableCell>
                     <TableCell>{a.location_name}</TableCell>
                     <TableCell>
@@ -5387,9 +5387,18 @@ function ScrapPage({ user }) {
 
   const loadData = async () => {
     try {
-      const data = await api.get('assets');
-      setAssets(data.filter(a => !['Scrapped', 'Canceled'].includes(a.status)));
-      setScrappedOrCanceled(data.filter(a => ['Scrapped', 'Canceled'].includes(a.status)));
+      const [activeData, archivedData] = await Promise.all([
+        api.get('assets'),
+        api.get('assets?archived=true')
+      ]);
+      setAssets((activeData || []).filter(a => !['Scrapped', 'Canceled'].includes(a.status)));
+      const allAssetRows = [...(activeData || []), ...(archivedData || [])];
+      const seen = new Set();
+      setScrappedOrCanceled(allAssetRows.filter(a => {
+        if (!['Scrapped', 'Canceled'].includes(a.status) || seen.has(a.id)) return false;
+        seen.add(a.id);
+        return true;
+      }));
     } catch (err) { toast.error('Failed to load assets'); }
   };
 

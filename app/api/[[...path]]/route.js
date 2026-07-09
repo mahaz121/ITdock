@@ -1196,8 +1196,19 @@ export async function GET(request, { params }) {
 
   // Unassigned assets (In Stock)
   if (route === 'assets/unassigned') {
-    const assets = await db.collection('assets').find({ status: 'In Stock' }).toArray();
-    return json(assets);
+    const assets = await db.collection('assets').find({ status: 'In Stock', archived: { $ne: true } }).toArray();
+    const [categories, locations] = await Promise.all([
+      db.collection('categories').find({}).toArray(),
+      db.collection('locations').find({}).toArray()
+    ]);
+    const categoryMap = Object.fromEntries(categories.map(c => [c.id, c]));
+    const locationMap = Object.fromEntries(locations.map(l => [l.id, l.name]));
+    return json(assets.map(a => ({
+      ...a,
+      category_name: categoryMap[a.category]?.name || a.category || '',
+      category_type: categoryMap[a.category]?.category_type || a.category_type || '',
+      location_name: locationMap[a.location_id] || ''
+    })));
   }
 
   // Single asset with activity log
@@ -1266,17 +1277,19 @@ export async function GET(request, { params }) {
     const employeeIds = [...new Set(assignments.map(a => a.employee_id).filter(id => id && id !== 'company'))];
     const assetIds = [...new Set(assignments.map(a => a.asset_id))];
     
-    const [employees, assets, projects, locations] = await Promise.all([
+    const [employees, assets, projects, locations, categories] = await Promise.all([
       employeeIds.length > 0 ? db.collection('employees').find({ id: { $in: employeeIds } }).toArray() : [],
       assetIds.length > 0 ? db.collection('assets').find({ id: { $in: assetIds } }).toArray() : [],
       db.collection('projects').find({}).toArray(),
-      db.collection('locations').find({}).toArray()
+      db.collection('locations').find({}).toArray(),
+      db.collection('categories').find({}).toArray()
     ]);
     
     const employeeMap = Object.fromEntries(employees.map(e => [e.id, e]));
     const assetMap = Object.fromEntries(assets.map(a => [a.id, a]));
     const projectMap = Object.fromEntries(projects.map(p => [p.id, p.name]));
     const locationMap = Object.fromEntries(locations.map(l => [l.id, l.name]));
+    const categoryMap = Object.fromEntries(categories.map(c => [c.id, c]));
     
     let enrichedAssignments = assignments.map(a => {
       const asset = assetMap[a.asset_id];
@@ -1284,7 +1297,8 @@ export async function GET(request, { params }) {
         ...a,
         employee_name: a.employee_id === 'company' ? 'Company' : (employeeMap[a.employee_id]?.name || ''),
         asset_tag: asset?.asset_tag || '',
-        asset_category: asset?.category || '',
+        asset_category: categoryMap[asset?.category]?.name || asset?.category_name || asset?.category || '',
+        asset_category_type: categoryMap[asset?.category]?.category_type || asset?.category_type || '',
         asset_project_id: asset?.project_id || '',
         asset_location_id: asset?.location_id || '',
         project_name: projectMap[asset?.project_id] || '',
