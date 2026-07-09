@@ -1,0 +1,352 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ========== MAHAZ PORTFOLIO THEME ========== */
+/* bg-primary: #050810, bg-secondary: #0a0e17, accent: #5eead4 / #0d9488 */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg-primary: #050810;
+  --bg-secondary: #0a0e17;
+  --bg-card: rgba(255,255,255,0.02);
+  --bg-card-hover: rgba(255,255,255,0.04);
+  --text-primary: #eae5ec;
+  --text-secondary: rgba(234,229,236,0.6);
+  --text-muted: rgba(234,229,236,0.4);
+  --accent: #5eead4;
+  --accent-dark: #14b8a6;
+  --accent-darkest: #0d9488;
+  --danger: #f87171;
+  --warning: #fb923c;
+  --success: #4ade80;
+  --border: rgba(255,255,255,0.08);
+  --border-accent: rgba(20,184,166,0.3);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.5);
+  --shadow-lg: 0 8px 48px rgba(0,0,0,0.6);
+  --shadow-glow: 0 0 20px rgba(20,184,166,0.06);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+
+  /* shadcn token overrides — dark */
+  --background: 230 30% 4%;
+  --foreground: 280 10% 92%;
+  --card: 230 28% 6%;
+  --card-foreground: 280 10% 92%;
+  --popover: 230 28% 6%;
+  --popover-foreground: 280 10% 92%;
+  --primary: 173 80% 45%;
+  --primary-foreground: 230 30% 4%;
+  --secondary: 230 20% 10%;
+  --secondary-foreground: 280 10% 92%;
+  --muted: 230 20% 10%;
+  --muted-foreground: 280 5% 55%;
+  --destructive: 0 72% 71%;
+  --destructive-foreground: 230 30% 4%;
+  --border: 230 15% 14%;
+  --input: 230 20% 10%;
+  --ring: 173 80% 45%;
+  --radius: 0.5rem;
+}
+
+/* ========== BASE ========== */
+@layer base {
+  * { @apply border-border; }
+  body {
+    background: #050810;
+    color: #eae5ec;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  html { background: #050810; }
+}
+
+/* ========== CARD ========== */
+.rounded-lg.border.bg-card,
+.rounded-xl.border.bg-card,
+.rounded-md.border.bg-card {
+  background: rgba(255,255,255,0.02) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  color: #eae5ec;
+}
+
+/* ========== DIALOG ========== */
+[role="dialog"] > div {
+  background: #0a0e17 !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  color: #eae5ec !important;
+  box-shadow: 0 8px 48px rgba(0,0,0,0.7) !important;
+}
+
+[data-radix-dialog-overlay] {
+  background: rgba(0,0,0,0.7) !important;
+  backdrop-filter: blur(4px);
+}
+
+/* Dialog content text */
+[role="dialog"] h2,
+[role="dialog"] h3,
+[role="dialog"] p {
+  color: #eae5ec !important;
+}
+[role="dialog"] .text-white,
+[role="dialog"] span.text-white {
+  color: #eae5ec !important;
+}
+
+/* ========== INPUTS ========== */
+input.flex,
+input[class*="flex h-"],
+textarea.flex,
+textarea[class*="flex min-h"] {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  color: #eae5ec !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+input.flex::placeholder,
+input[class*="flex h-"]::placeholder,
+textarea.flex::placeholder,
+textarea[class*="flex min-h"]::placeholder {
+  color: rgba(234,229,236,0.35) !important;
+}
+
+input.flex:focus,
+input[class*="flex h-"]:focus,
+textarea.flex:focus,
+textarea[class*="flex min-h"]:focus {
+  border-color: rgba(20,184,166,0.5) !important;
+  box-shadow: 0 0 0 3px rgba(20,184,166,0.12) !important;
+  outline: none !important;
+  background: rgba(255,255,255,0.06) !important;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+  opacity: 0.5;
+}
+
+/* ========== SELECT / COMBOBOX ========== */
+button[role="combobox"],
+[class*="SelectTrigger"] {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  color: #eae5ec !important;
+}
+
+[data-radix-popper-content-wrapper] > div,
+[data-radix-select-content],
+[role="listbox"],
+[cmdk-root] {
+  background: #0d1221 !important;
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  color: #eae5ec !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6) !important;
+}
+
+[data-radix-select-item],
+[cmdk-item] {
+  color: #eae5ec !important;
+}
+
+[data-radix-select-item]:hover,
+[data-radix-select-item][data-highlighted],
+[cmdk-item][aria-selected="true"],
+[cmdk-item][data-selected="true"] {
+  background: rgba(94,234,212,0.08) !important;
+  color: #5eead4 !important;
+}
+
+[cmdk-input] {
+  background: rgba(255,255,255,0.04) !important;
+  border-bottom: 1px solid rgba(255,255,255,0.08) !important;
+  color: #eae5ec !important;
+}
+
+[cmdk-input]::placeholder {
+  color: rgba(234,229,236,0.35) !important;
+}
+
+/* ========== TABLE ========== */
+table tbody tr {
+  background: transparent;
+  border-color: rgba(255,255,255,0.04) !important;
+  transition: background 0.15s ease;
+}
+
+table tbody tr:hover {
+  background: rgba(94,234,212,0.04) !important;
+  cursor: pointer;
+}
+
+table thead tr {
+  border-color: rgba(255,255,255,0.06) !important;
+  background: rgba(255,255,255,0.02);
+}
+
+table th {
+  color: rgba(234,229,236,0.5) !important;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+table td {
+  border-color: rgba(255,255,255,0.03) !important;
+  color: #eae5ec;
+}
+
+/* ========== LABELS ========== */
+label {
+  color: rgba(234,229,236,0.6) !important;
+  font-size: 0.8125rem;
+}
+
+/* ========== TABS ========== */
+[role="tablist"] {
+  background: rgba(255,255,255,0.03) !important;
+  border: 1px solid rgba(255,255,255,0.06) !important;
+  padding: 3px;
+  border-radius: 8px;
+}
+
+[role="tab"][data-state="inactive"] {
+  color: rgba(234,229,236,0.5) !important;
+  background: transparent !important;
+}
+
+[role="tab"][data-state="active"] {
+  background: rgba(255,255,255,0.06) !important;
+  color: #eae5ec !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4) !important;
+  border-radius: 6px;
+}
+
+/* ========== BADGE OVERRIDES (dark-adjusted status colors) ========== */
+.bg-green-100 { background: rgba(74,222,128,0.12) !important; }
+.text-green-800 { color: #4ade80 !important; }
+.text-green-600 { color: #4ade80 !important; }
+
+.bg-blue-100 { background: rgba(94,234,212,0.10) !important; }
+.bg-blue-50  { background: rgba(94,234,212,0.06) !important; }
+.text-blue-800 { color: #5eead4 !important; }
+.text-blue-700 { color: #5eead4 !important; }
+.border-blue-200 { border-color: rgba(94,234,212,0.2) !important; }
+
+.bg-red-100 { background: rgba(248,113,113,0.12) !important; }
+.text-red-800 { color: #f87171 !important; }
+.text-red-600 { color: #f87171 !important; }
+
+.bg-orange-100 { background: rgba(251,146,60,0.12) !important; }
+.text-orange-800 { color: #fb923c !important; }
+.text-orange-500 { color: #fb923c !important; }
+
+.bg-yellow-100 { background: rgba(250,204,21,0.10) !important; }
+.text-yellow-800 { color: #facc15 !important; }
+.text-yellow-600 { color: #facc15 !important; }
+
+.bg-purple-100 { background: rgba(192,132,252,0.12) !important; }
+.text-purple-800 { color: #c084fc !important; }
+
+.bg-gray-100 { background: rgba(255,255,255,0.05) !important; }
+.text-gray-800 { color: #eae5ec !important; }
+
+/* ========== ALERT ========== */
+[role="alert"] {
+  background: rgba(251,146,60,0.08) !important;
+  border-color: rgba(251,146,60,0.25) !important;
+  color: #eae5ec !important;
+}
+
+/* ========== RADIO GROUP ========== */
+.border.rounded-lg:hover {
+  background: rgba(255,255,255,0.04) !important;
+}
+
+/* ========== CHECKBOX ========== */
+[role="checkbox"] {
+  border-color: rgba(255,255,255,0.2) !important;
+}
+
+/* ========== SCROLL AREA ========== */
+[data-radix-scroll-area-viewport] {
+  background: transparent !important;
+}
+
+/* ========== OUTLINE & GHOST BUTTONS ========== */
+.border.border-input {
+  border-color: rgba(255,255,255,0.12) !important;
+  color: #eae5ec;
+  background: rgba(255,255,255,0.03);
+}
+
+.border.border-input:hover {
+  background: rgba(255,255,255,0.06) !important;
+}
+
+button[class*="ghost"]:hover,
+.hover\:bg-accent:hover {
+  background: rgba(255,255,255,0.05) !important;
+}
+
+/* ========== TRANSITIONS ========== */
+button, a, input, select, textarea {
+  transition: all 0.2s ease;
+}
+
+/* ========== LIGHT-BACKGROUND COMPAT (dark theme) ========== */
+/* bg-[#F5F5F7] elements inherit white text from body — fix with subtle dark bg */
+.bg-\[#F5F5F7\] {
+  background: rgba(255,255,255,0.04) !important;
+  color: #eae5ec !important;
+}
+
+/* Explicit dark-on-light overrides for any remaining light panels */
+.text-\[#1D1D1F\] { color: #eae5ec !important; }
+.text-\[#3A3A3C\] { color: rgba(234,229,236,0.8) !important; }
+.text-\[#6E6E73\] { color: rgba(234,229,236,0.55) !important; }
+.text-\[#AEAEB2\] { color: rgba(234,229,236,0.4) !important; }
+
+/* Inputs, selects, textareas — always dark text on any background */
+input, select, textarea {
+  color: #eae5ec !important;
+}
+input::placeholder, textarea::placeholder {
+  color: rgba(234,229,236,0.35) !important;
+}
+
+/* ========== SCROLLBAR ========== */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(94,234,212,0.3); }
+
+/* ========== FADE-UP ANIMATION ========== */
+.fade-up {
+  opacity: 0;
+  transform: translateY(32px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.fade-up.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.fade-up-delay-1 { transition-delay: 0.1s; }
+.fade-up-delay-2 { transition-delay: 0.2s; }
+.fade-up-delay-3 { transition-delay: 0.3s; }
+.fade-up-delay-4 { transition-delay: 0.4s; }
+.fade-up-delay-5 { transition-delay: 0.5s; }

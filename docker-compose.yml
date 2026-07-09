@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MONGO_URL: mongodb://localhost:27017
+    container_name: itdock-app-v2
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      MONGO_URL: mongodb://localhost:27017
+      DB_NAME: ${DB_NAME:-itdock}
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production-min-32-chars}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
+      NODE_ENV: production
+      PORT: 3000
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  uploads_data:
