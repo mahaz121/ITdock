@@ -23,7 +23,7 @@ This guide provides step-by-step instructions for deploying ITDock to production
 ### Step 1: Prepare Environment
 ```bash
 # Clone repository
-git clone <your-repository-url>
+git clone https://github.com/mahaz121/ITdock.git itdock
 cd itdock
 
 # Create .env file
@@ -219,7 +219,7 @@ sudo mkdir -p /var/www/itdock
 cd /var/www/itdock
 
 # Clone repository
-sudo git clone <your-repository-url> .
+sudo git clone https://github.com/mahaz121/ITdock.git .
 
 # Set permissions
 sudo chown -R $USER:$USER /var/www/itdock
