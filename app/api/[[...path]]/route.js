@@ -2994,20 +2994,22 @@ export async function POST(request, { params }) {
   if (route === 'extensions') {
     if (!['super_admin', 'it_admin'].includes(user.role)) return error('Forbidden', 403);
     const body = await request.json();
-    const { extensionNumber, name, permission } = body;
+    const { extensionNumber, permission } = body;
     if (!extensionNumber?.trim()) return error('extensionNumber is required');
-    if (!name?.trim()) return error('name is required');
+    if (!body.assignedTo) return error('assignedTo is required');
     if (!['internal', 'local', 'international'].includes(permission)) return error('Invalid permission');
     const existing = await db.collection('extensions').findOne({ extensionNumber: extensionNumber.trim() });
     if (existing) return error(`Extension ${extensionNumber} already exists`, 409);
+    const assignedEmployee = await db.collection('employees').findOne({ id: body.assignedTo });
+    if (!assignedEmployee) return error('Assigned employee not found', 404);
     const doc = {
       id: uuidv4(),
       extensionNumber: extensionNumber.trim(),
-      name: name.trim(),
+      name: assignedEmployee.name || extensionNumber.trim(),
       departmentId: body.departmentId || null,
       locationId: body.locationId || null,
       permission,
-      assignedTo: body.assignedTo || null,
+      assignedTo: body.assignedTo,
       notes: body.notes || '',
       isActive: body.isActive !== false,
       createdBy: user.id,
@@ -3455,13 +3457,19 @@ export async function PUT(request, { params }) {
       const dup = await db.collection('extensions').findOne({ extensionNumber: body.extensionNumber.trim(), id: { $ne: extId } });
       if (dup) return error(`Extension ${body.extensionNumber} already exists`, 409);
     }
+    let assignedEmployee = null;
+    if (body.assignedTo !== undefined) {
+      if (!body.assignedTo) return error('assignedTo is required');
+      assignedEmployee = await db.collection('employees').findOne({ id: body.assignedTo });
+      if (!assignedEmployee) return error('Assigned employee not found', 404);
+    }
     const updates = {
       extensionNumber: body.extensionNumber?.trim() || existing.extensionNumber,
-      name: body.name?.trim() || existing.name,
+      name: assignedEmployee?.name || body.name?.trim() || existing.name,
       departmentId: body.departmentId !== undefined ? (body.departmentId || null) : existing.departmentId,
       locationId: body.locationId !== undefined ? (body.locationId || null) : existing.locationId,
       permission: body.permission || existing.permission,
-      assignedTo: body.assignedTo !== undefined ? (body.assignedTo || null) : existing.assignedTo,
+      assignedTo: body.assignedTo !== undefined ? body.assignedTo : existing.assignedTo,
       notes: body.notes !== undefined ? body.notes : existing.notes,
       isActive: body.isActive !== undefined ? body.isActive : existing.isActive,
       updatedAt: new Date().toISOString()

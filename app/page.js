@@ -1459,7 +1459,7 @@ function Sidebar({ activeTab, setActiveTab, user, onLogout, notificationCount })
   const handleNavClick = (id) => setActiveTab(id);
 
   return (
-    <div className="w-64 h-screen flex flex-col shrink-0" style={{background: '#050810', borderRight: '1px solid rgba(255,255,255,0.08)'}}>
+    <aside className="w-64 h-screen sticky top-0 flex flex-col shrink-0 z-20" style={{background: '#050810', borderRight: '1px solid rgba(255,255,255,0.08)', color:'#eae5ec'}}>
       <div className="p-5" style={{borderBottom: '1px solid rgba(255,255,255,0.06)'}}>
         <div className="flex items-center gap-3 cursor-pointer" onClick={() => handleNavClick('dashboard')}>
           <img src="/logo.png" alt="ITdock" style={{width:36, height:36, borderRadius:10, objectFit:'contain', flexShrink:0}} />
@@ -1507,7 +1507,7 @@ function Sidebar({ activeTab, setActiveTab, user, onLogout, notificationCount })
         </Button>
       </div>
       <SecurityDialog open={twoFactorOpen} onOpenChange={setTwoFactorOpen} onLogout={onLogout} />
-    </div>
+    </aside>
   );
 }
 
@@ -5102,15 +5102,20 @@ function ExtensionsPage({ user }) {
 
   const handleSave = async () => {
     if (!form.extensionNumber?.trim()) return toast.error('Extension number is required');
-    if (!form.name?.trim()) return toast.error('Name is required');
+    if (!form.assignedTo) return toast.error('Assign an employee to this extension');
     if (!form.permission) return toast.error('Permission level is required');
     setSaving(true);
     try {
+      const assignedEmployee = employees.find(e => e.id === form.assignedTo);
+      const payload = {
+        ...form,
+        name: assignedEmployee?.name || form.name || form.extensionNumber.trim()
+      };
       if (editingId) {
-        await api.put(`extensions/${editingId}`, form);
+        await api.put(`extensions/${editingId}`, payload);
         toast.success('Extension updated');
       } else {
-        await api.post('extensions', form);
+        await api.post('extensions', payload);
         toast.success('Extension added');
       }
       setDialogOpen(false);
@@ -5154,7 +5159,8 @@ function ExtensionsPage({ user }) {
     if (filterPerm && e.permission !== filterPerm) return false;
     if (search) {
       const q = search.toLowerCase();
-      if (!e.extensionNumber?.toLowerCase().includes(q) && !e.name?.toLowerCase().includes(q)) return false;
+      const employeeName = e.assignedTo ? getEmpName(e.assignedTo) : '';
+      if (!e.extensionNumber?.toLowerCase().includes(q) && !e.name?.toLowerCase().includes(q) && !employeeName?.toLowerCase().includes(q)) return false;
     }
     return true;
   });
@@ -5179,7 +5185,7 @@ function ExtensionsPage({ user }) {
       <div className="flex flex-wrap gap-3 mb-5">
         <div className="relative flex-1 min-w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{color:'rgba(234,229,236,0.4)'}} />
-          <Input placeholder="Search extension or name..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec'}} />
+          <Input placeholder="Search extension or employee..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec'}} />
         </div>
         <Select value={filterDept || '__all__'} onValueChange={v => setFilterDept(v === '__all__' ? '' : v)}>
           <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'160px'}}>
@@ -5223,7 +5229,6 @@ function ExtensionsPage({ user }) {
           <TableHeader>
             <TableRow>
               <TableHead>Ext. No.</TableHead>
-              <TableHead>Name</TableHead>
               <TableHead>Department</TableHead>
               <TableHead>Location</TableHead>
               <TableHead>Permission</TableHead>
@@ -5235,7 +5240,7 @@ function ExtensionsPage({ user }) {
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={canEdit ? 8 : 7} className="text-center py-12" style={{color:'rgba(234,229,236,0.4)'}}>
+                <TableCell colSpan={canEdit ? 7 : 6} className="text-center py-12" style={{color:'rgba(234,229,236,0.4)'}}>
                   <Phone className="h-10 w-10 mx-auto mb-2 opacity-20" />
                   <p>No extensions found</p>
                 </TableCell>
@@ -5248,7 +5253,6 @@ function ExtensionsPage({ user }) {
                   <TableCell>
                     <span className="text-lg font-bold" style={{color:'#eae5ec'}}>{ext.extensionNumber}</span>
                   </TableCell>
-                  <TableCell style={{color:'#eae5ec'}}>{ext.name}</TableCell>
                   <TableCell style={{color:'rgba(234,229,236,0.7)'}}>{getDeptName(ext.departmentId)}</TableCell>
                   <TableCell style={{color:'rgba(234,229,236,0.7)'}}>{getLocName(ext.locationId)}</TableCell>
                   <TableCell>
@@ -5294,15 +5298,9 @@ function ExtensionsPage({ user }) {
             <DialogTitle style={{color:'#eae5ec'}}>{editingId ? 'Edit Extension' : 'Add Extension'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-1">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
+            <div>
                 <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Extension Number *</Label>
                 <Input placeholder="e.g. 1042" value={form.extensionNumber || ''} onChange={e => setForm({...form, extensionNumber: e.target.value})} style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.12)', color:'#eae5ec'}} />
-              </div>
-              <div>
-                <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Name *</Label>
-                <Input placeholder="Person or label" value={form.name || ''} onChange={e => setForm({...form, name: e.target.value})} style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.12)', color:'#eae5ec'}} />
-              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -5344,7 +5342,7 @@ function ExtensionsPage({ user }) {
               </Select>
             </div>
             <div>
-              <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Assign to Employee (optional)</Label>
+              <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Assign to Employee *</Label>
               <SearchableSelect
                 options={employees.map(e => ({ id: e.id, name: e.name }))}
                 value={form.assignedTo || ''}
@@ -6467,16 +6465,16 @@ export default function App() {
 
   return (
     <ConfirmProvider>
-    <div className="flex min-h-screen" style={{background: '#0a0e17'}}>
+    <div className="flex h-screen overflow-hidden" style={{background: '#0a0e17', color:'#eae5ec'}}>
       <IdleTimeoutWatcher onLogout={handleLogout} />
       {user.is_default_password && <ForcePasswordChangeModal onPasswordChanged={() => setUser({...user, is_default_password: false})} />}
       <Sidebar activeTab={activeTab} setActiveTab={navigateToTab} user={user} onLogout={handleLogout} />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         {/* Header */}
         <header className="h-14 flex items-center justify-end px-6 shrink-0" style={{background: '#050810', borderBottom: '1px solid rgba(255,255,255,0.08)'}}>
           <NotificationBell onNotificationClick={handleNotificationClick} />
         </header>
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden" style={{background:'#0a0e17', color:'#eae5ec'}}>
           <ErrorBoundary key={activeTab}>
           {activeTab === 'dashboard' && <Dashboard onNavigate={navigateToTab} onNavigateToBills={() => { setAssetsBillsFilter(true); navigateToTab('assets'); }} />}
           {activeTab === 'employees' && <EmployeesList user={user} onViewEmployee={viewEmployee} onCreateEmployee={() => {}} />}
