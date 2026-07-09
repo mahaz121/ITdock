@@ -5181,30 +5181,30 @@ function ExtensionsPage({ user }) {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{color:'rgba(234,229,236,0.4)'}} />
           <Input placeholder="Search extension or name..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec'}} />
         </div>
-        <Select value={filterDept} onValueChange={setFilterDept}>
+        <Select value={filterDept || '__all__'} onValueChange={v => setFilterDept(v === '__all__' ? '' : v)}>
           <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'160px'}}>
             <SelectValue placeholder="All Departments" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Departments</SelectItem>
+            <SelectItem value="__all__">All Departments</SelectItem>
             {departments.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={filterLoc} onValueChange={setFilterLoc}>
+        <Select value={filterLoc || '__all__'} onValueChange={v => setFilterLoc(v === '__all__' ? '' : v)}>
           <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'150px'}}>
             <SelectValue placeholder="All Locations" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Locations</SelectItem>
+            <SelectItem value="__all__">All Locations</SelectItem>
             {locations.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={filterPerm} onValueChange={setFilterPerm}>
+        <Select value={filterPerm || '__all__'} onValueChange={v => setFilterPerm(v === '__all__' ? '' : v)}>
           <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'160px'}}>
             <SelectValue placeholder="All Permissions" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Permissions</SelectItem>
+            <SelectItem value="__all__">All Permissions</SelectItem>
             <SelectItem value="internal">Internal</SelectItem>
             <SelectItem value="local">Local</SelectItem>
             <SelectItem value="international">International</SelectItem>
@@ -5307,24 +5307,24 @@ function ExtensionsPage({ user }) {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Department</Label>
-                <Select value={form.departmentId || ''} onValueChange={v => setForm({...form, departmentId: v || null})}>
+                <Select value={form.departmentId || '__none__'} onValueChange={v => setForm({...form, departmentId: v === '__none__' ? null : v})}>
                   <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.12)', color:'#eae5ec'}}>
                     <SelectValue placeholder="Select..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="__none__">None</SelectItem>
                     {departments.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div>
                 <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Location</Label>
-                <Select value={form.locationId || ''} onValueChange={v => setForm({...form, locationId: v || null})}>
+                <Select value={form.locationId || '__none__'} onValueChange={v => setForm({...form, locationId: v === '__none__' ? null : v})}>
                   <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.12)', color:'#eae5ec'}}>
                     <SelectValue placeholder="Select..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="__none__">None</SelectItem>
                     {locations.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
