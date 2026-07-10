@@ -3460,9 +3460,9 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
     try {
       const [assetData, emps, opts, maintenance, docs, audits, addonData] = await Promise.all([
         api.get(`assets/${assetId}`),
-        api.get('employees?status=Active'),
-        api.get('filters'),
-        api.get('maintenance'),
+        api.get('employees?status=Active').catch(() => []),
+        api.get('filters').catch(() => ({})),
+        api.get('maintenance').catch(() => []),
         api.get(`assets/${assetId}/documents`).catch(() => []),
         api.get(`assets/${assetId}/audits`).catch(() => []),
         api.get(`assets/${assetId}/addons`).catch(() => [])
