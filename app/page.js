@@ -2457,19 +2457,26 @@ function EmployeeDetail({ employeeId, user, onBack, onViewAsset }) {
           <CardContent>
             {employee.assigned_assets?.length > 0 ? (
               <div className="space-y-2">
-                {employee.assigned_assets.map(a => (
-                  <div key={a.id} className="flex justify-between items-center p-2 rounded cursor-pointer transition-colors"
+                {employee.assigned_assets.map(a => {
+                  const linkedAssetId = a.id || a.asset_id;
+                  return (
+                  <div key={linkedAssetId} className="flex justify-between items-center p-2 rounded cursor-pointer transition-colors"
                     style={{background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.08)'}}
                     onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.08)'}
                     onMouseLeave={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'}
-                    onClick={() => onViewAsset(a.id)}>
+                    onClick={() => linkedAssetId && onViewAsset(linkedAssetId)}>
                     <div>
                       <p className="font-medium text-sm" style={{color:'#eae5ec'}}>{a.name || a.asset_tag}</p>
                       <p className="text-xs" style={{color:'rgba(234,229,236,0.5)'}}>{a.category_name || a.category || 'Uncategorised'}</p>
                     </div>
-                    <Eye className="h-4 w-4 shrink-0" style={{color:'rgba(234,229,236,0.4)'}} />
+                    <button type="button" aria-label={`View asset ${a.asset_tag || a.name || ''}`} title="View asset"
+                      onClick={(e) => { e.stopPropagation(); if (linkedAssetId) onViewAsset(linkedAssetId); }}
+                      className="p-2 rounded hover:bg-white/10 disabled:opacity-40" disabled={!linkedAssetId}>
+                      <Eye className="h-4 w-4 shrink-0" style={{color:'rgba(234,229,236,0.65)'}} />
+                    </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : <p className="text-sm" style={{color:'rgba(234,229,236,0.4)'}}>No assets assigned</p>}
           </CardContent>
