@@ -442,7 +442,7 @@ export async function GET(request, { params }) {
     const dbUser = await db.collection('users').findOne({ id: user.id });
     if (!dbUser) return error('User not found', 404);
     const roles = normalizeRoles(dbUser.roles || dbUser.role);
-    return json({ id: dbUser.id, email: dbUser.email, name: dbUser.name, role: roles[0], roles, is_default_password: dbUser.is_default_password || false });
+    return json({ id: dbUser.id, email: dbUser.email, name: dbUser.name, role: legacyRoleFor(roles), roles, is_default_password: dbUser.is_default_password || false });
   }
 
   // TOTP status
@@ -1622,7 +1622,7 @@ export async function POST(request, { params }) {
     const token = generateToken(user);
     const sessionId = await createSession(db, user, token, request);
     const roles = normalizeRoles(user.roles || user.role);
-    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: roles[0], roles, is_default_password: user.is_default_password || false } });
+    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: legacyRoleFor(roles), roles, is_default_password: user.is_default_password || false } });
   }
 
   // TOTP second-factor login
@@ -1637,7 +1637,7 @@ export async function POST(request, { params }) {
     const token = generateToken(user);
     const sessionId = await createSession(db, user, token, request);
     const roles = normalizeRoles(user.roles || user.role);
-    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: roles[0], roles, is_default_password: user.is_default_password || false } });
+    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: legacyRoleFor(roles), roles, is_default_password: user.is_default_password || false } });
   }
 
   // Protected routes
