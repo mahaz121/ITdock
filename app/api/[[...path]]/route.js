@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { hashPassword, verifyPassword, generateToken, verifyToken, getUserFromRequest, canAccess } from '@/lib/auth';
+import { hashPassword, verifyPassword, generateToken, verifyToken, getUserFromRequest, canAccess, normalizeRoles } from '@/lib/auth';
 import { sendMail } from '@/lib/mail';
 import { v4 as uuidv4 } from 'uuid';
 import { writeFile, mkdir, unlink, readFile } from 'fs/promises';
@@ -153,7 +153,15 @@ function generateApiKey() {
 async function getAuthUser(request, db) {
   // 1. Try JWT
   const jwtUser = getUserFromRequest(request);
-  if (jwtUser) return jwtUser;
+  if (jwtUser) {
+    const dbUser = await db.collection('users').findOne({ id: jwtUser.id });
+    if (!dbUser) return null;
+    const roles = normalizeRoles(dbUser.roles || dbUser.role);
+    if (!Array.isArray(dbUser.roles) || JSON.stringify(dbUser.roles) !== JSON.stringify(roles)) {
+      db.collection('users').updateOne({ id: dbUser.id }, { $set: { roles, role: roles[0] } }).catch(() => {});
+    }
+    return { ...jwtUser, role: legacyRoleFor(roles), roles };
+  }
 
   // 2. Try API key from X-API-Key header or "ApiKey <key>" Authorization
   const authHeader = request.headers.get('authorization') || '';
@@ -172,7 +180,8 @@ async function getAuthUser(request, db) {
 
   const dbUser = await db.collection('users').findOne({ id: keyRecord.user_id });
   if (!dbUser) return null;
-  return { id: dbUser.id, email: dbUser.email, role: dbUser.role, name: dbUser.name, via_api_key: true, api_key_id: keyRecord.id, api_key_scopes: keyRecord.scopes || [] };
+  const roles = normalizeRoles(dbUser.roles || dbUser.role);
+  return { id: dbUser.id, email: dbUser.email, role: legacyRoleFor(roles), roles, name: dbUser.name, via_api_key: true, api_key_id: keyRecord.id, api_key_scopes: keyRecord.scopes || [] };
 }
 
 const TOTP_HMAC_KEY = process.env.JWT_SECRET || 'mahaz-secret-2024';
@@ -211,6 +220,20 @@ function json(data, status = 200) {
 
 function error(message, status = 400) {
   return NextResponse.json({ error: message }, { status, headers: corsHeaders });
+}
+
+function legacyRoleFor(roles) {
+  if (roles.includes('admin')) return 'super_admin';
+  if (roles.includes('asset_manager') || roles.includes('it_support')) return 'it_admin';
+  return 'viewer';
+}
+
+function writeAllowed(user, route, method) {
+  const roles = normalizeRoles(user.roles || user.role);
+  if (roles.includes('admin')) return true;
+  if (roles.includes('asset_manager')) return !route.startsWith('vacation/') && !route.startsWith('users') && !route.startsWith('settings/');
+  if (roles.includes('it_support')) return route.startsWith('vacation/') || route === 'assignments/bulk-unassign' || (method === 'PUT' && route.startsWith('employees/'));
+  return route.startsWith('auth/');
 }
 
 // Audit log helper
@@ -340,7 +363,8 @@ async function seedAdmin(db) {
       email: 'admin',
       password: hashPassword('admin'),
       name: 'Super Admin',
-      role: 'super_admin',
+      role: 'admin',
+      roles: ['admin'],
       is_default_password: true,
       created_at: new Date().toISOString()
     });
@@ -417,7 +441,8 @@ export async function GET(request, { params }) {
     if (!user) return error('Unauthorized', 401);
     const dbUser = await db.collection('users').findOne({ id: user.id });
     if (!dbUser) return error('User not found', 404);
-    return json({ id: dbUser.id, email: dbUser.email, name: dbUser.name, role: dbUser.role, is_default_password: dbUser.is_default_password || false });
+    const roles = normalizeRoles(dbUser.roles || dbUser.role);
+    return json({ id: dbUser.id, email: dbUser.email, name: dbUser.name, role: roles[0], roles, is_default_password: dbUser.is_default_password || false });
   }
 
   // TOTP status
@@ -951,7 +976,7 @@ export async function GET(request, { params }) {
   // ============ USERS ============
   
   if (route === 'users') {
-    if (user.role !== 'super_admin') return error('Forbidden', 403);
+    if (!canAccess(user, 'all')) return error('Forbidden', 403);
     const users = await db.collection('users').find({}, { projection: { password: 0 } }).toArray();
     return json(users);
   }
@@ -1596,7 +1621,8 @@ export async function POST(request, { params }) {
 
     const token = generateToken(user);
     const sessionId = await createSession(db, user, token, request);
-    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: user.role, is_default_password: user.is_default_password || false } });
+    const roles = normalizeRoles(user.roles || user.role);
+    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: roles[0], roles, is_default_password: user.is_default_password || false } });
   }
 
   // TOTP second-factor login
@@ -1610,12 +1636,14 @@ export async function POST(request, { params }) {
     if (!verifyTOTP(user.totp_secret, totp_code)) return error('Invalid authenticator code', 401);
     const token = generateToken(user);
     const sessionId = await createSession(db, user, token, request);
-    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: user.role, is_default_password: user.is_default_password || false } });
+    const roles = normalizeRoles(user.roles || user.role);
+    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: roles[0], roles, is_default_password: user.is_default_password || false } });
   }
 
   // Protected routes
   const user = await getAuthUser(request, db);
   if (!user) return error('Unauthorized', 401);
+  if (!writeAllowed(user, route, 'POST')) return error('Forbidden', 403);
 
   // Update session last_active (fire and forget)
   touchSession(db, request.headers.get('x-session-id'));
@@ -1845,12 +1873,13 @@ export async function POST(request, { params }) {
   // ============ USERS ============
   
   if (route === 'users') {
-    if (user.role !== 'super_admin') return error('Forbidden', 403);
+    if (!canAccess(user, 'all')) return error('Forbidden', 403);
     
     const body = await request.json();
-    const { email, password, name, role } = body;
+    const { email, password, name } = body;
+    const roles = normalizeRoles(body.roles || body.role);
     
-    if (!email || !password || !name || !role) {
+    if (!email || !password || !name || !roles.length) {
       return error('All fields required');
     }
     
@@ -1862,14 +1891,15 @@ export async function POST(request, { params }) {
       email,
       password: hashPassword(password),
       name,
-      role,
+      role: roles[0],
+      roles,
       created_at: new Date().toISOString()
     };
     
     await db.collection('users').insertOne(newUser);
-    await logAudit(db, user.id, 'CREATE', 'user', newUser.id, { email, role });
+    await logAudit(db, user.id, 'CREATE', 'user', newUser.id, { email, roles });
     
-    return json({ id: newUser.id, email, name, role }, 201);
+    return json({ id: newUser.id, email, name, role: roles[0], roles }, 201);
   }
 
   // ============ EMPLOYEES ============
@@ -3134,6 +3164,7 @@ export async function PUT(request, { params }) {
   const user = await getAuthUser(request, db);
 
   if (!user) return error('Unauthorized', 401);
+  if (!writeAllowed(user, route, 'PUT')) return error('Forbidden', 403);
 
   // ============ MASTER DATA UPDATES ============
   
@@ -3227,7 +3258,7 @@ export async function PUT(request, { params }) {
   if (route.startsWith('users/') && pathSegments.length === 2) {
     const userId = pathSegments[1];
     
-    if (user.id !== userId && user.role !== 'super_admin') {
+    if (user.id !== userId && !canAccess(user, 'all')) {
       return error('Forbidden', 403);
     }
     
@@ -3250,7 +3281,10 @@ export async function PUT(request, { params }) {
       updates.password = hashPassword(body.password);
       updates.is_default_password = false; // Clear default password flag when password is changed
     }
-    if (body.role && user.role === 'super_admin') updates.role = body.role;
+    if ((body.roles || body.role) && canAccess(user, 'all')) {
+      updates.roles = normalizeRoles(body.roles || body.role);
+      updates.role = updates.roles[0];
+    }
     
     await db.collection('users').updateOne({ id: userId }, { $set: updates });
     await logAudit(db, user.id, 'UPDATE', 'user', userId, { fields: Object.keys(updates) });
@@ -3516,6 +3550,7 @@ export async function DELETE(request, { params }) {
   const user = await getAuthUser(request, db);
 
   if (!user) return error('Unauthorized', 401);
+  if (!writeAllowed(user, route, 'DELETE')) return error('Forbidden', 403);
 
   // ============ MASTER DATA DELETES ============
   

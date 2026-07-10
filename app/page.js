@@ -6131,6 +6131,12 @@ function AuditLogPage({ user, embedded }) {
 
 // Users Page
 function UsersPage({ currentUser }) {
+  const roleOptions = [
+    { id: 'admin', label: 'Super Admin' },
+    { id: 'it_support', label: 'IT Support' },
+    { id: 'asset_manager', label: 'Asset Manager' },
+    { id: 'ordinary', label: 'Ordinary' }
+  ];
   const [users, setUsers] = useState([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -6140,14 +6146,14 @@ function UsersPage({ currentUser }) {
   useEffect(() => { api.get('users').then(setUsers).catch(() => toast.error('Failed to load users')); }, []);
 
   const openDialog = (u = null) => {
-    if (u) { setEditing(u); setFormData({ email: u.email, name: u.name, role: u.role, password: '' }); }
-    else { setEditing(null); setFormData({ email: '', name: '', role: 'viewer', password: '' }); }
+    if (u) { setEditing(u); setFormData({ email: u.email, name: u.name, roles: u.roles || [u.role], password: '' }); }
+    else { setEditing(null); setFormData({ email: '', name: '', roles: ['ordinary'], password: '' }); }
     setDialogOpen(true);
   };
 
   const handleSubmit = async () => {
     try {
-      if (editing) { const updates = { name: formData.name, role: formData.role }; if (formData.password) updates.password = formData.password; await api.put(`users/${editing.id}`, updates); }
+      if (editing) { const updates = { name: formData.name, roles: formData.roles }; if (formData.password) updates.password = formData.password; await api.put(`users/${editing.id}`, updates); }
       else { await api.post('users', formData); }
       toast.success(editing ? 'Updated' : 'Created');
       setDialogOpen(false);
@@ -6163,7 +6169,7 @@ function UsersPage({ currentUser }) {
   };
 
   const getRoleColor = (r) => {
-    const colors = { super_admin: 'bg-red-100 text-red-800', it_admin: 'bg-blue-100 text-blue-800', it_technician: 'bg-green-100 text-green-800', viewer: 'bg-[#F5F5F7] text-gray-800' };
+    const colors = { admin: 'bg-red-100 text-red-800', asset_manager: 'bg-blue-100 text-blue-800', it_support: 'bg-green-100 text-green-800', ordinary: 'bg-[#F5F5F7] text-gray-800' };
     return colors[r] || 'bg-[#F5F5F7] text-gray-800';
   };
 
@@ -6181,7 +6187,7 @@ function UsersPage({ currentUser }) {
               <TableRow key={u.id}>
                 <TableCell className="font-medium">{u.name}</TableCell>
                 <TableCell>{u.email}</TableCell>
-                <TableCell><Badge className={getRoleColor(u.role)}>{u.role.replace('_', ' ')}</Badge></TableCell>
+                <TableCell><div className="flex flex-wrap gap-1">{(u.roles || [u.role]).map(r => <Badge key={r} className={getRoleColor(r)}>{roleOptions.find(o => o.id === r)?.label || r.replace('_', ' ')}</Badge>)}</div></TableCell>
                 <TableCell>
                   <Button size="sm" variant="ghost" onClick={() => openDialog(u)}><Pencil className="h-4 w-4" /></Button>
                   {u.id !== currentUser.id && <Button size="sm" variant="ghost" onClick={() => handleDelete(u.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>}
@@ -6199,21 +6205,15 @@ function UsersPage({ currentUser }) {
             <div><Label>Name *</Label><Input value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} /></div>
             <div><Label>Email *</Label><Input type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} disabled={!!editing} /></div>
             <div><Label>{editing ? 'New Password' : 'Password *'}</Label><Input type="password" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})} /></div>
-            <div><Label>Role</Label>
-              <Select value={formData.role} onValueChange={(v) => setFormData({...formData, role: v})}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="super_admin">Super Admin</SelectItem>
-                  <SelectItem value="it_admin">IT Admin</SelectItem>
-                  <SelectItem value="it_technician">IT Technician</SelectItem>
-                  <SelectItem value="viewer">Viewer</SelectItem>
-                </SelectContent>
-              </Select>
+            <div><Label>Roles *</Label>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                {roleOptions.map(option => <label key={option.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={(formData.roles || []).includes(option.id)} onChange={e => setFormData({...formData, roles: e.target.checked ? [...(formData.roles || []), option.id] : (formData.roles || []).filter(r => r !== option.id)})} />{option.label}</label>)}
+              </div>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSubmit} className="bg-[#0d9488]" disabled={!formData.name || !formData.email || (!editing && !formData.password)}>{editing ? 'Update' : 'Create'}</Button>
+            <Button onClick={handleSubmit} className="bg-[#0d9488]" disabled={!formData.name || !formData.email || !(formData.roles || []).length || (!editing && !formData.password)}>{editing ? 'Update' : 'Create'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
