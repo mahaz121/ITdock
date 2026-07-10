@@ -5794,6 +5794,7 @@ function SmtpSettingsTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testRecipient, setTestRecipient] = useState('');
   const [testResult, setTestResult] = useState(null); // { ok, msg }
 
   useEffect(() => {
@@ -5816,7 +5817,7 @@ function SmtpSettingsTab() {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await api.post('settings/smtp/test', {});
+      const res = await api.post('settings/smtp/test', { ...cfg, to: testRecipient });
       setTestResult({ ok: true, msg: `Test email sent to ${res.to}` });
     } catch (err) {
       setTestResult({ ok: false, msg: err.message });
@@ -5864,10 +5865,14 @@ function SmtpSettingsTab() {
           <label style={labelStyle}>From Address</label>
           <input style={fieldStyle} value={cfg.fromAddress} onChange={e => setCfg({...cfg, fromAddress: e.target.value})} placeholder="noreply@yourdomain.com" />
         </div>
+        <div className="col-span-2">
+          <label style={labelStyle}>Test Recipient</label>
+          <input style={fieldStyle} type="email" value={testRecipient} onChange={e => setTestRecipient(e.target.value)} placeholder="recipient@example.com" />
+        </div>
       </div>
 
       <div className="flex items-center gap-3">
-        <button onClick={handleTest} disabled={testing || !cfg.host}
+        <button onClick={handleTest} disabled={testing || !cfg.host || !cfg.user || !testRecipient}
           style={{background:'rgba(255,255,255,0.06)', color:'#eae5ec', border:'1px solid rgba(255,255,255,0.12)', borderRadius:'8px', padding:'8px 16px', fontWeight:500, fontSize:'14px', cursor: (testing || !cfg.host) ? 'not-allowed' : 'pointer', opacity: (testing || !cfg.host) ? 0.5 : 1}}>
           {testing ? 'Sending…' : 'Test Email'}
         </button>

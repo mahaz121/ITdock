@@ -3087,21 +3087,34 @@ export async function POST(request, { params }) {
     return json({ success: true });
   }
 
-  // POST /api/settings/smtp/test — send test email to logged-in admin
+  // POST /api/settings/smtp/test — test current form values with an explicit recipient
   if (route === 'settings/smtp/test') {
     if (user.role !== 'super_admin') return error('Forbidden', 403);
-    const adminUser = await db.collection('users').findOne({ id: user.id });
-    const to = adminUser?.email;
-    if (!to) return error('No email address found for your account');
+    const body = await request.json();
+    const { to, host, port, secure, user: smtpUser, pass, fromName, fromAddress } = body;
+    if (!to?.trim()) return error('Enter a test recipient email address');
+    if (!host || !smtpUser) return error('Host and username are required');
+    let finalPass = pass;
+    if (!pass || pass === '••••••••') {
+      const existing = await db.collection('settings').findOne({ key: 'smtp' });
+      finalPass = existing?.value?.pass || '';
+    }
+    if (!finalPass) return error('SMTP password is required');
+    const smtpConfig = {
+      host, port: parseInt(port, 10) || 587, secure: secure || 'tls',
+      user: smtpUser, pass: finalPass, fromName: fromName || '',
+      fromAddress: fromAddress || smtpUser
+    };
     try {
       const result = await sendMail({
-        to,
+        to: to.trim(),
         subject: '[ITdock] Test Email — Configuration Working',
         text: 'This is a test email from ITdock. Your email configuration is working correctly.',
-        html: '<p>This is a test email from <strong>ITdock</strong>. Your email configuration is working correctly.</p>'
+        html: '<p>This is a test email from <strong>ITdock</strong>. Your email configuration is working correctly.</p>',
+        smtpConfig
       });
-      if (result.skipped) return error('SMTP is not configured. Save settings first.', 400);
-      return json({ success: true, to });
+      if (result.skipped) return error('SMTP configuration is incomplete.', 400);
+      return json({ success: true, to: to.trim() });
     } catch (err) {
       return error(`Email failed: ${err.message}`, 400);
     }
