@@ -3463,7 +3463,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
         api.get('employees?status=Active'),
         api.get('filters'),
         api.get('maintenance'),
-        api.get(`assets/${assetId}/documents`),
+        api.get(`assets/${assetId}/documents`).catch(() => []),
         api.get(`assets/${assetId}/audits`).catch(() => []),
         api.get(`assets/${assetId}/addons`).catch(() => [])
       ]);
