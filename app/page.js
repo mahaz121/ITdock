@@ -1,4 +1,5 @@
 'use client';
+import CustodyFormsPage from './CustodyFormsPage';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
@@ -1440,6 +1441,7 @@ function Sidebar({ activeTab, setActiveTab, user, onLogout, notificationCount })
     { id: 'employees', label: 'Employees', icon: Users },
     { id: 'extensions', label: 'Extensions', icon: Phone },
     { id: 'assignments', label: 'Assignments', icon: Link2 },
+    { id: 'custody', label: 'Custody Forms', icon: FileText },
     { id: 'maintenance', label: 'Maintenance', icon: Wrench },
     { id: 'scrap', label: 'Scrap', icon: Trash2 },
   ];
@@ -1845,7 +1847,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee }) {
   };
 
   const openDialog = () => {
-    setFormData({ name: '', employee_id: '', company_id: '', project_id: '', location_id: '', department_id: '', manager_id: '', mobile_number: '', status: 'Active' });
+    setFormData({ name: '', employee_id: '', id_number: '', designation: '', company_id: '', project_id: '', location_id: '', department_id: '', manager_id: '', mobile_number: '', status: 'Active' });
     setDialogOpen(true);
   };
 
@@ -2064,6 +2066,8 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee }) {
           <div className="grid grid-cols-2 gap-4">
             <div><Label>Name *</Label><Input value={formData.name || ''} onChange={(e) => setFormData({...formData, name: e.target.value})} /></div>
             <div><Label>Employee ID *</Label><Input value={formData.employee_id || ''} onChange={(e) => setFormData({...formData, employee_id: e.target.value})} /></div>
+            <div><Label>ID / Iqama Number</Label><Input value={formData.id_number || ''} onChange={(e) => setFormData({...formData, id_number: e.target.value})} /></div>
+            <div><Label>Designation</Label><Input value={formData.designation || ''} onChange={(e) => setFormData({...formData, designation: e.target.value})} /></div>
             <div><Label>Company *</Label>
               <SearchableSelect options={filterOptions.companies || []} value={formData.company_id} onChange={(v) => setFormData({...formData, company_id: v})} placeholder="Select company..." />
             </div>
@@ -6504,6 +6508,7 @@ export default function App() {
           {activeTab === 'asset-detail' && <AssetDetail assetId={selectedAssetId} user={user} onBack={() => navigateToTab('assets')} onViewEmployee={viewEmployee} onNavigateToEmployeeCreate={() => navigateToTab('employees')} onNavigateToMaintenance={() => setActiveTab('maintenance')} />}
           {activeTab === 'extensions' && <ExtensionsPage user={user} />}
           {activeTab === 'assignments' && <AssignmentsPage user={user} onViewAsset={viewAsset} />}
+          {activeTab === 'custody' && <CustodyFormsPage user={user} api={api} />}
           {activeTab === 'maintenance' && <MaintenancePage user={user} />}
           {activeTab === 'scrap' && <ScrapPage user={user} />}
           {activeTab === 'vacation' && <PendingApprovalsPage user={user} onViewAsset={viewAsset} onViewEmployee={viewEmployee} />}

@@ -483,6 +483,15 @@ export async function GET(request, { params }) {
   touchSession(db, request.headers.get('x-session-id'));
 
   // ============ MASTER DATA ============
+
+  if (route === 'custody/template') {
+    const doc = await db.collection('settings').findOne({ key: 'custody_template' });
+    return json(doc?.value || { title_en: 'Asset Custody Form', title_ar: 'نموذج عهدة أصول', terms_en: '', terms_ar: '' });
+  }
+  if (route === 'custody/forms') {
+    const forms = await db.collection('custody_forms').find({}).sort({ created_at: -1 }).toArray();
+    return json(forms);
+  }
   
   // Companies
   if (route === 'companies') {
@@ -974,7 +983,6 @@ export async function GET(request, { params }) {
   }
 
   // ============ USERS ============
-  
   if (route === 'users') {
     if (!canAccess(user, 'all')) return error('Forbidden', 403);
     const users = await db.collection('users').find({}, { projection: { password: 0 } }).toArray();
@@ -1868,6 +1876,22 @@ export async function POST(request, { params }) {
     await logAudit(db, user.id, 'CREATE', 'category', newCategory.id, { name, category_type });
 
     return json(newCategory, 201);
+  }
+
+  // ============ CUSTODY FORMS ============
+  if (route === 'custody/forms') {
+    if (!canAccess(user, 'assets')) return error('Forbidden', 403);
+    const body = await request.json();
+    const employee = await db.collection('employees').findOne({ id: body.employee_id });
+    const asset = await db.collection('assets').findOne({ id: body.asset_id, archived: { $ne: true } });
+    const company = await db.collection('companies').findOne({ id: body.company_id });
+    if (!employee || !asset || !company) return error('Employee, stock asset, and company are required');
+    if (asset.assigned_to || !['In Stock', 'Available'].includes(asset.status)) return error('Only unassigned stock assets can be selected');
+    const [templateDoc, project, department] = await Promise.all([db.collection('settings').findOne({ key: 'custody_template' }), employee.project_id ? db.collection('projects').findOne({ id: employee.project_id }) : null, employee.department_id ? db.collection('departments').findOne({ id: employee.department_id }) : null]);
+    const count = await db.collection('custody_forms').countDocuments();
+    const form = { id: uuidv4(), reference: `CF-${String(count + 1).padStart(5, '0')}`, status: 'Draft', employee_id: employee.id, employee: { name: employee.name, employee_id: employee.employee_id, id_number: employee.id_number || '', designation: employee.designation || '', project: project?.name || '', department: department?.name || '' }, asset_id: asset.id, asset: { asset_tag: asset.asset_tag, category: asset.category_name || asset.category, brand: asset.brand || '', model: asset.model || '', serial_number: asset.serial_number || '', specifications: asset.specifications || asset.full_specification || '' }, company_id: company.id, company: { name: company.name, name_ar: company.name_ar || '', logo: company.logo || '' }, cost: body.cost || '', currency: body.currency || 'SAR', template: templateDoc?.value || {}, generated_by: user.name, created_by: user.id, created_at: new Date().toISOString() };
+    await db.collection('custody_forms').insertOne(form);
+    return json(form, 201);
   }
 
   // ============ USERS ============
@@ -3166,6 +3190,24 @@ export async function PUT(request, { params }) {
   if (!user) return error('Unauthorized', 401);
   if (!writeAllowed(user, route, 'PUT')) return error('Forbidden', 403);
 
+  if (route === 'custody/template') {
+    if (!canAccess(user, 'all')) return error('Forbidden', 403);
+    const value = await request.json();
+    await db.collection('settings').updateOne({ key: 'custody_template' }, { $set: { key: 'custody_template', value, updated_at: new Date().toISOString() } }, { upsert: true });
+    return json({ success: true });
+  }
+  if (pathSegments[0] === 'custody' && pathSegments[1] === 'forms' && pathSegments.length === 4 && pathSegments[3] === 'assign') {
+    const form = await db.collection('custody_forms').findOne({ id: pathSegments[2] });
+    if (!form) return error('Form not found', 404);
+    if (form.status === 'Assigned') return error('Asset already assigned');
+    const asset = await db.collection('assets').findOne({ id: form.asset_id });
+    if (!asset || asset.assigned_to) return error('Asset is no longer available');
+    await db.collection('assignments').insertOne({ id: uuidv4(), asset_id: form.asset_id, employee_id: form.employee_id, assignment_type: 'Normal', assigned_date: new Date().toISOString(), unassigned_date: null, assigned_by: user.id });
+    await db.collection('assets').updateOne({ id: form.asset_id }, { $set: { assigned_to: form.employee_id, status: 'Assigned' } });
+    await db.collection('custody_forms').updateOne({ id: form.id }, { $set: { status: 'Assigned', assigned_at: new Date().toISOString(), assigned_by: user.id } });
+    return json({ success: true });
+  }
+
   // ============ MASTER DATA UPDATES ============
   
   if (route.startsWith('companies/') && pathSegments.length === 2) {
@@ -3551,6 +3593,14 @@ export async function DELETE(request, { params }) {
 
   if (!user) return error('Unauthorized', 401);
   if (!writeAllowed(user, route, 'DELETE')) return error('Forbidden', 403);
+
+  if (pathSegments[0] === 'custody' && pathSegments[1] === 'forms' && pathSegments.length === 3) {
+    const form = await db.collection('custody_forms').findOne({ id: pathSegments[2] });
+    if (!form) return error('Form not found', 404);
+    if (form.status === 'Assigned') return error('Assigned custody forms cannot be deleted');
+    await db.collection('custody_forms').deleteOne({ id: form.id });
+    return json({ success: true });
+  }
 
   // ============ MASTER DATA DELETES ============
   
