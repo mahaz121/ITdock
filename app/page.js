@@ -6180,25 +6180,29 @@ function UsersPage({ currentUser }) {
 // About Us Page (in-app)
 function AboutDeveloperPage() {
   const features = [
-    { icon: '🖥️', label: 'Physical Asset Tracking', desc: 'Laptops, desktops, monitors, peripherals' },
-    { icon: '☁️', label: 'Subscription & Cloud Tracking', desc: 'SaaS, VPS, cloud services with billing alerts' },
-    { icon: '👤', label: 'Employee Management', desc: 'Link assets to people with full assignment history' },
-    { icon: '🏖️', label: 'Vacation Asset Tracking', desc: 'Know where assets are when staff are away' },
-    { icon: '📞', label: 'Office Extension Directory', desc: 'Internal telephone extensions with permissions' },
-    { icon: '🔍', label: 'Asset Audits', desc: 'Rolling 2-month checklist audits with QC pass/fail' },
-    { icon: '📄', label: 'Invoice Management', desc: 'Upload and organize invoices per asset' },
-    { icon: '🔧', label: 'Maintenance Tracking', desc: 'Log repairs and maintenance history' },
-    { icon: '💻', label: 'Hardware Specs', desc: 'RAM, CPU, storage, IP address per device' },
-    { icon: '📦', label: 'Addon Tracking', desc: 'Track paid extras on servers and subscriptions' },
-    { icon: '📡', label: 'IoT & Network Devices', desc: 'IP cameras, switches, routers with MAC/VLAN' },
-    { icon: '🔐', label: 'Enterprise Security', desc: 'RBAC, 2FA, session management, audit log' },
+    { icon: Monitor, label: 'Physical Asset Tracking', desc: 'Laptops, desktops, monitors, and peripherals' },
+    { icon: Cloud, label: 'Subscription & Cloud Tracking', desc: 'SaaS, VPS, and cloud services with billing alerts' },
+    { icon: Users, label: 'Employee Management', desc: 'Link assets to people with full assignment history' },
+    { icon: Plane, label: 'Vacation Asset Tracking', desc: 'Know where assets are when staff are away' },
+    { icon: Phone, label: 'Office Extension Directory', desc: 'Internal telephone extensions with permissions' },
+    { icon: ClipboardList, label: 'Asset Audits', desc: 'Rolling checklist audits with QC pass/fail' },
+    { icon: FileText, label: 'Invoice Management', desc: 'Upload and organize invoices per asset' },
+    { icon: Wrench, label: 'Maintenance Tracking', desc: 'Log repairs and maintenance history' },
+    { icon: Cpu, label: 'Hardware Specifications', desc: 'RAM, CPU, storage, and IP address per device' },
+    { icon: PlusCircle, label: 'Addon Tracking', desc: 'Track paid extras on servers and subscriptions' },
+    { icon: Wifi, label: 'IoT & Network Devices', desc: 'IP cameras, switches, and routers with MAC/VLAN' },
+    { icon: Shield, label: 'Enterprise Security', desc: 'RBAC, 2FA, session management, and audit logs' },
+    { icon: Link2, label: 'API Integration', desc: 'Connect ITdock with external systems and workflows' },
+    { icon: ShieldCheck, label: 'Warranty Management', desc: 'Track coverage, expiration dates, and warranty status' },
+    { icon: Building2, label: 'Vendor Management', desc: 'Manage suppliers, contacts, purchases, and relationships' },
+    { icon: Package, label: 'IT Inventory Management', desc: 'Maintain a complete, accurate view of your IT inventory' },
   ];
 
   const links = [
-    { icon: Globe, label: '🌐 mahaz.uk', href: 'https://mahaz.uk' },
-    { icon: ExternalLink, label: '💼 LinkedIn', href: 'https://www.linkedin.com/in/mahaz-abdullah/' },
-    { icon: Github, label: '🐙 GitHub', href: 'https://github.com/mahaz121' },
-    { icon: Github, label: '🐙 ITdock GitHub', href: 'https://github.com/mahaz121/ITdock' },
+    { icon: Globe, label: 'mahaz.uk', href: 'https://mahaz.uk' },
+    { icon: ExternalLink, label: 'LinkedIn', href: 'https://www.linkedin.com/in/mahaz-abdullah/' },
+    { icon: Github, label: 'GitHub', href: 'https://github.com/mahaz121' },
+    { icon: Github, label: 'ITdock GitHub', href: 'https://github.com/mahaz121/ITdock' },
   ];
 
   return (
@@ -6207,9 +6211,7 @@ function AboutDeveloperPage() {
       {/* Section 1 — App Info (hero) */}
       <div className="rounded-2xl p-7" style={{background:'rgba(94,234,212,0.08)', border:'1px solid rgba(94,234,212,0.22)'}}>
         <div className="flex items-start gap-5 mb-4">
-          <div className="w-14 h-14 rounded-2xl bg-[#0d9488] flex items-center justify-center shrink-0" style={{boxShadow:'0 0 28px rgba(94,234,212,0.4)'}}>
-            <Package className="h-7 w-7 text-white" />
-          </div>
+          <img src="/logo.png" alt="ITdock logo" className="w-14 h-14 object-contain shrink-0" />
           <div className="flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold" style={{color:'#eae5ec'}}>ITdock</h1>
@@ -6227,12 +6229,14 @@ function AboutDeveloperPage() {
       <div>
         <h2 className="font-semibold text-base mb-4" style={{color:'#eae5ec'}}>What ITdock Can Do</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {features.map((f, i) => (
-            <div key={i} className="flex items-start gap-3 p-3 rounded-xl" style={{background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'}}>
-              <span className="text-base shrink-0 mt-0.5">{f.icon}</span>
+          {features.map(({icon: Icon, label, desc}) => (
+            <div key={label} className="flex items-start gap-3 p-3 rounded-xl" style={{background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'}}>
+              <span className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{background:'rgba(94,234,212,0.10)', border:'1px solid rgba(94,234,212,0.20)'}}>
+                <Icon className="h-4 w-4" style={{color:'#5eead4'}} />
+              </span>
               <div>
-                <p className="text-sm font-medium" style={{color:'#eae5ec'}}>{f.label}</p>
-                <p className="text-xs" style={{color:'rgba(234,229,236,0.45)'}}>{f.desc}</p>
+                <p className="text-sm font-medium" style={{color:'#eae5ec'}}>{label}</p>
+                <p className="text-xs" style={{color:'rgba(234,229,236,0.45)'}}>{desc}</p>
               </div>
             </div>
           ))}

@@ -4,7 +4,8 @@ import {
   Monitor, Shield, RefreshCw, FileText, Users, Bell,
   Database, Github, Globe, Mail, Heart, Coffee,
   ArrowLeft, Cpu, Key, Upload, Lock, Phone,
-  Search, Wrench, Server, Wifi, ExternalLink
+  Search, Wrench, Server, Wifi, ExternalLink, ShieldCheck,
+  Building2, Boxes, Code2, ClipboardCheck, Cloud, UserRound, Receipt, Puzzle
 } from 'lucide-react';
 
 const TEAL = '#5eead4';
@@ -16,18 +17,22 @@ const TEXT = '#eae5ec';
 const MUTED = 'rgba(234,229,236,0.55)';
 
 const features = [
-  { icon: '🖥️', label: 'Physical Asset Tracking', desc: 'Laptops, desktops, monitors, peripherals' },
-  { icon: '☁️', label: 'Subscription & Cloud Tracking', desc: 'SaaS, VPS, cloud services with billing alerts' },
-  { icon: '👤', label: 'Employee Management', desc: 'Link assets to people with full assignment history' },
-  { icon: '🏖️', label: 'Vacation Asset Tracking', desc: 'Know where assets are when staff are away' },
-  { icon: '📞', label: 'Office Extension Directory', desc: 'Internal telephone extensions with permissions' },
-  { icon: '🔍', label: 'Asset Audits', desc: 'Rolling 2-month checklist audits with QC pass/fail' },
-  { icon: '📄', label: 'Invoice Management', desc: 'Upload and organize invoices per asset' },
-  { icon: '🔧', label: 'Maintenance Tracking', desc: 'Log repairs and maintenance history' },
-  { icon: '💻', label: 'Hardware Specs', desc: 'RAM, CPU, storage, IP address per device' },
-  { icon: '📦', label: 'Addon Tracking', desc: 'Track paid extras on servers and subscriptions' },
-  { icon: '📡', label: 'IoT & Network Devices', desc: 'IP cameras, switches, routers with MAC/VLAN' },
-  { icon: '🔐', label: 'Enterprise Security', desc: 'RBAC, 2FA, session management, audit log' },
+  { icon: Monitor, label: 'Physical Asset Tracking', desc: 'Laptops, desktops, monitors, and peripherals' },
+  { icon: Cloud, label: 'Subscription & Cloud Tracking', desc: 'SaaS, VPS, and cloud services with billing alerts' },
+  { icon: UserRound, label: 'Employee Management', desc: 'Link assets to people with full assignment history' },
+  { icon: RefreshCw, label: 'Vacation Asset Tracking', desc: 'Know where assets are when staff are away' },
+  { icon: Phone, label: 'Office Extension Directory', desc: 'Internal telephone extensions with permissions' },
+  { icon: ClipboardCheck, label: 'Asset Audits', desc: 'Rolling checklist audits with QC pass/fail' },
+  { icon: Receipt, label: 'Invoice Management', desc: 'Upload and organize invoices per asset' },
+  { icon: Wrench, label: 'Maintenance Tracking', desc: 'Log repairs and maintenance history' },
+  { icon: Cpu, label: 'Hardware Specifications', desc: 'RAM, CPU, storage, and IP address per device' },
+  { icon: Puzzle, label: 'Addon Tracking', desc: 'Track paid extras on servers and subscriptions' },
+  { icon: Wifi, label: 'IoT & Network Devices', desc: 'IP cameras, switches, and routers with MAC/VLAN' },
+  { icon: Lock, label: 'Enterprise Security', desc: 'RBAC, 2FA, session management, and audit logs' },
+  { icon: Code2, label: 'API Integration', desc: 'Connect ITdock with external systems and workflows' },
+  { icon: ShieldCheck, label: 'Warranty Management', desc: 'Track coverage, expiration dates, and warranty status' },
+  { icon: Building2, label: 'Vendor Management', desc: 'Manage suppliers, contacts, purchases, and relationships' },
+  { icon: Boxes, label: 'IT Inventory Management', desc: 'Maintain a complete, accurate view of your IT inventory' },
 ];
 
 export default function AboutPage() {
@@ -76,9 +81,11 @@ export default function AboutPage() {
           <h2 style={{ fontSize: 26, fontWeight: 700, color: TEXT, marginBottom: 8 }}>What ITdock Can Do</h2>
           <p style={{ fontSize: 14, color: MUTED, marginBottom: 28 }}>Everything your IT team needs, in one clean interface.</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
-            {features.map(({ icon, label, desc }) => (
+            {features.map(({ icon: Icon, label, desc }) => (
               <div key={label} style={{ borderRadius: 14, padding: '18px 20px', background: SURFACE, border: `1px solid ${BORDER}`, display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-                <span style={{ fontSize: 22, lineHeight: 1, flexShrink: 0, marginTop: 2 }}>{icon}</span>
+                <span style={{ width: 36, height: 36, borderRadius: 10, background: TEAL_DIM, border: `1px solid ${TEAL_BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Icon size={18} color={TEAL} strokeWidth={1.8} />
+                </span>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, marginBottom: 4 }}>{label}</div>
                   <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.55 }}>{desc}</div>
@@ -113,16 +120,16 @@ export default function AboutPage() {
           <h2 style={{ fontSize: 26, fontWeight: 700, color: TEXT, marginBottom: 20 }}>Connect</h2>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
             {[
-              { label: '🌐 mahaz.uk', href: 'https://mahaz.uk' },
-              { label: '💼 LinkedIn', href: 'https://www.linkedin.com/in/mahaz-abdullah/' },
-              { label: '🐙 GitHub', href: 'https://github.com/mahaz121' },
-              { label: '🐙 ITdock GitHub', href: 'https://github.com/mahaz121/ITdock' },
-            ].map(({ label, href }) => (
+              { icon: Globe, label: 'mahaz.uk', href: 'https://mahaz.uk' },
+              { icon: ExternalLink, label: 'LinkedIn', href: 'https://www.linkedin.com/in/mahaz-abdullah/' },
+              { icon: Github, label: 'GitHub', href: 'https://github.com/mahaz121' },
+              { icon: Github, label: 'ITdock GitHub', href: 'https://github.com/mahaz121/ITdock' },
+            ].map(({ icon: Icon, label, href }) => (
               <a key={label} href={href} target="_blank" rel="noopener noreferrer"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 500, padding: '9px 18px', borderRadius: 10, background: SURFACE, color: TEXT, textDecoration: 'none', border: `1px solid ${BORDER}` }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor = TEAL_BORDER; e.currentTarget.style.color = TEAL; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = TEXT; }}>
-                {label}
+                <Icon size={15} />{label}
               </a>
             ))}
           </div>
