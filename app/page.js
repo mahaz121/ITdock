@@ -6422,12 +6422,28 @@ export default function App() {
   };
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center" style={{background: '#0a0e17'}}>
-      <div className="text-center">
-        <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-[#0d9488] flex items-center justify-center animate-pulse">
-          <Monitor className="h-6 w-6 text-white" />
+    <div className="min-h-screen flex items-center justify-center overflow-hidden relative" style={{background:'#050810'}}>
+      <style>{`
+        @keyframes loaderOrbit { to { transform: rotate(360deg); } }
+        @keyframes loaderPulse { 0%,100% { transform:scale(.96); opacity:.72; } 50% { transform:scale(1.04); opacity:1; } }
+        @keyframes loaderScan { 0% { transform:translateX(-110%); } 100% { transform:translateX(310%); } }
+        @keyframes loaderBlink { 0%,100% { opacity:.3; } 50% { opacity:1; } }
+      `}</style>
+      <div className="absolute inset-0 opacity-30" style={{backgroundImage:'linear-gradient(rgba(94,234,212,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(94,234,212,.035) 1px, transparent 1px)', backgroundSize:'36px 36px', maskImage:'radial-gradient(circle at center, black, transparent 68%)'}} />
+      <div className="text-center relative z-10">
+        <div className="relative w-28 h-28 mx-auto mb-7 flex items-center justify-center">
+          <div className="absolute inset-0 rounded-full" style={{border:'1px solid rgba(94,234,212,.12)', boxShadow:'0 0 45px rgba(13,148,136,.16)'}} />
+          <div className="absolute inset-2 rounded-full" style={{border:'1px solid transparent', borderTopColor:'#5eead4', borderRightColor:'rgba(94,234,212,.18)', animation:'loaderOrbit 1.6s linear infinite'}} />
+          <div className="absolute inset-5 rounded-full" style={{background:'rgba(94,234,212,.055)', border:'1px solid rgba(94,234,212,.14)', animation:'loaderPulse 2s ease-in-out infinite'}} />
+          <img src="/logo.png" alt="ITdock logo" className="w-14 h-14 object-contain relative z-10" />
         </div>
-        <p style={{color:'rgba(234,229,236,0.6)'}}>Loading ITdock...</p>
+        <p className="text-sm font-semibold tracking-[0.22em] uppercase" style={{color:'#eae5ec'}}>Initializing ITdock</p>
+        <div className="w-44 h-px mx-auto mt-4 overflow-hidden" style={{background:'rgba(94,234,212,.12)'}}>
+          <div className="w-16 h-full" style={{background:'linear-gradient(90deg, transparent, #5eead4, transparent)', animation:'loaderScan 1.45s ease-in-out infinite'}} />
+        </div>
+        <div className="flex justify-center gap-1.5 mt-4" aria-hidden="true">
+          {[0,1,2].map(i => <span key={i} className="w-1 h-1 rounded-full" style={{background:'#5eead4', animation:`loaderBlink 1.2s ${i * .18}s ease-in-out infinite`}} />)}
+        </div>
       </div>
     </div>
   );
