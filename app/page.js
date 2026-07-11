@@ -4522,7 +4522,7 @@ function MasterDataPage({ user }) {
       setEditing(null);
       setFormData(activeTab === 'categories'
         ? { name: '', category_type: 'STORABLE' }
-        : { name: '', code: '', address: '' });
+        : activeTab === 'companies' ? { name: '', name_ar: '', code: '', logo: '' } : { name: '', code: '', address: '' });
     }
     setDialogOpen(true);
   };
@@ -4635,6 +4635,10 @@ function MasterDataPage({ user }) {
           </DialogHeader>
           <div className="space-y-4">
             <div><Label>Name *</Label><Input value={formData.name || ''} onChange={(e) => setFormData({...formData, name: e.target.value})} /></div>
+            {activeTab === 'companies' && <>
+              <div><Label>Arabic Company Name</Label><Input dir="rtl" value={formData.name_ar || ''} onChange={(e) => setFormData({...formData, name_ar: e.target.value})} /></div>
+              <div><Label>Company Logo</Label><Input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => { const file=e.target.files?.[0]; if (!file) return; if (file.size > 1024*1024) return toast.error('Logo must be smaller than 1 MB'); const reader=new FileReader(); reader.onload=()=>setFormData({...formData,logo:reader.result}); reader.readAsDataURL(file); }} />{formData.logo && <img src={formData.logo} alt="Company logo" className="mt-2 h-16 max-w-48 object-contain" />}</div>
+            </>}
             {activeTab === 'categories' ? (
               <div>
                 <Label className="block mb-2">Type *</Label>

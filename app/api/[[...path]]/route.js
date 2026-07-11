@@ -1761,7 +1761,7 @@ export async function POST(request, { params }) {
     if (!['super_admin', 'it_admin'].includes(user.role)) return error('Forbidden', 403);
     
     const body = await request.json();
-    const { name, code } = body;
+    const { name, code, name_ar, logo } = body;
     
     if (!name) return error('Company name required');
     
@@ -1772,6 +1772,8 @@ export async function POST(request, { params }) {
       id: uuidv4(),
       name,
       code: code || '',
+      name_ar: name_ar || '',
+      logo: logo || '',
       created_at: new Date().toISOString()
     };
     
@@ -1888,6 +1890,11 @@ export async function POST(request, { params }) {
     if (!employee || !asset || !company) return error('Employee, stock asset, and company are required');
     if (asset.assigned_to || !['In Stock', 'Available'].includes(asset.status)) return error('Only unassigned stock assets can be selected');
     const [templateDoc, project, department] = await Promise.all([db.collection('settings').findOne({ key: 'custody_template' }), employee.project_id ? db.collection('projects').findOne({ id: employee.project_id }) : null, employee.department_id ? db.collection('departments').findOne({ id: employee.department_id }) : null]);
+    const category = asset.category ? await db.collection('categories').findOne({ id: asset.category }) : null;
+    asset.category_name = category?.name || asset.category_name;
+    asset.brand = asset.brand_name || asset.brand || asset.manufacturer || '';
+    asset.model = asset.model || asset.model_number || asset.name || '';
+    asset.specifications = asset.full_specification || asset.specifications || [asset.processor, asset.ram, asset.storage].filter(Boolean).join(' / ');
     const count = await db.collection('custody_forms').countDocuments();
     const form = { id: uuidv4(), reference: `CF-${String(count + 1).padStart(5, '0')}`, status: 'Draft', employee_id: employee.id, employee: { name: employee.name, employee_id: employee.employee_id, id_number: employee.id_number || '', designation: employee.designation || '', project: project?.name || '', department: department?.name || '' }, asset_id: asset.id, asset: { asset_tag: asset.asset_tag, category: asset.category_name || asset.category, brand: asset.brand || '', model: asset.model || '', serial_number: asset.serial_number || '', specifications: asset.specifications || asset.full_specification || '' }, company_id: company.id, company: { name: company.name, name_ar: company.name_ar || '', logo: company.logo || '' }, cost: body.cost || '', currency: body.currency || 'SAR', template: templateDoc?.value || {}, generated_by: user.name, created_by: user.id, created_at: new Date().toISOString() };
     await db.collection('custody_forms').insertOne(form);
