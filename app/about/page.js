@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import {
-  Monitor, Package, Shield, RefreshCw, FileText, Users, Bell,
+  Monitor, Shield, RefreshCw, FileText, Users, Bell,
   Database, Github, Globe, Mail, Heart, Coffee,
   ArrowLeft, Cpu, Key, Upload, Lock, Phone,
   Search, Wrench, Server, Wifi, ExternalLink
@@ -38,9 +38,7 @@ export default function AboutPage() {
       <nav style={{ borderBottom: `1px solid ${BORDER}`, backdropFilter: 'blur(12px)', background: 'rgba(5,8,16,0.8)', position: 'sticky', top: 0, zIndex: 50 }}>
         <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: '#0d9488', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 16px rgba(94,234,212,0.35)' }}>
-              <span style={{ color: '#fff', fontWeight: 700, fontSize: 13 }}>IT</span>
-            </div>
+            <img src="/logo.png" alt="ITdock logo" style={{ width: 32, height: 32, objectFit: 'contain', flexShrink: 0 }} />
             <span style={{ fontWeight: 700, fontSize: 16, color: TEXT }}>ITdock</span>
           </div>
           <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: MUTED, textDecoration: 'none' }}>
@@ -53,9 +51,7 @@ export default function AboutPage() {
 
         {/* Section 1 — App Info (hero) */}
         <section style={{ textAlign: 'center', padding: '72px 0 56px' }}>
-          <div style={{ width: 72, height: 72, borderRadius: 20, background: '#0d9488', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', boxShadow: '0 0 40px rgba(94,234,212,0.4)' }}>
-            <Package size={36} color="#fff" />
-          </div>
+          <img src="/logo.png" alt="ITdock logo" style={{ width: 72, height: 72, objectFit: 'contain', display: 'block', margin: '0 auto 24px' }} />
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: 48, fontWeight: 800, color: TEXT, margin: 0, lineHeight: 1.15 }}>
               IT<span style={{ color: TEAL }}>dock</span>

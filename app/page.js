@@ -479,7 +479,7 @@ function MahazLandingPage({ onLogin }) {
         <div className="fade-up mt-16 w-full max-w-2xl mx-auto">
           <div className="rounded-3xl p-6" style={{background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.07)', boxShadow:'0 16px 64px rgba(0,0,0,0.6)'}}>
             <div className="flex items-center gap-2 mb-5 pb-4" style={{borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-              <div className="w-7 h-7 rounded-lg bg-[#0d9488] flex items-center justify-center"><Monitor className="h-4 w-4 text-white" /></div>
+              <img src="/logo.png" alt="ITdock logo" className="w-7 h-7 object-contain" />
               <span className="text-sm font-bold" style={{color:'#eae5ec'}}>ITdock</span>
               <span className="text-xs ml-1" style={{color:'rgba(234,229,236,0.35)'}}>Dashboard</span>
               <div className="ml-auto flex gap-1.5">{['#FF3B30','#FF9500','#34C759'].map(c=><div key={c} className="w-2.5 h-2.5 rounded-full" style={{background:c}} />)}</div>
@@ -513,16 +513,6 @@ function MahazLandingPage({ onLogin }) {
           </div>
         </div>
       </section>
-
-      {/* ── 2. Trust bar ── */}
-      <div className="relative z-10 py-5 px-8" style={{background:'rgba(255,255,255,0.02)', borderTop:'1px solid rgba(255,255,255,0.05)', borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
-        <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
-          <span className="text-xs font-medium" style={{color:'rgba(234,229,236,0.3)'}}>BUILT WITH</span>
-          {['Next.js 14','MongoDB','Tailwind CSS','shadcn/ui','JWT + TOTP','Docker Ready'].map(t => (
-            <span key={t} className="text-xs font-semibold" style={{color:'rgba(234,229,236,0.45)'}}>{t}</span>
-          ))}
-        </div>
-      </div>
 
       {/* ── 3. Alternating highlights ── */}
       <section id="highlights" className="relative z-10" style={{background:'#0a0e17'}}>
@@ -592,42 +582,6 @@ function MahazLandingPage({ onLogin }) {
         </div>
       </section>
 
-      {/* ── 6. Author Card ── */}
-      <section className="relative z-10 py-20 px-8" style={{background:'#050810'}}>
-        <div className="max-w-3xl mx-auto text-center mb-10 fade-up">
-          <h2 className="text-2xl font-bold mb-2" style={{color:'#eae5ec'}}>Built by a real IT person</h2>
-          <p className="text-base" style={{color:'rgba(234,229,236,0.55)'}}>Not a VC-backed product. Just someone who got tired of spreadsheets.</p>
-        </div>
-        <div className="max-w-2xl mx-auto fade-up">
-          <div className="rounded-2xl p-7 flex items-start gap-6 flex-wrap" style={{background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)'}}>
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl font-bold shrink-0" style={{background:'linear-gradient(135deg, #0d9488, #5eead4)', color:'#050810'}}>M</div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-2 flex-wrap">
-                <h3 className="font-bold text-base" style={{color:'#eae5ec'}}>Mahaz</h3>
-                <span className="text-xs px-2.5 py-0.5 rounded-full" style={{background:'rgba(94,234,212,0.12)', color:'#5eead4', border:'1px solid rgba(94,234,212,0.2)'}}>Author</span>
-              </div>
-              <p className="text-sm leading-relaxed mb-4" style={{color:'rgba(234,229,236,0.55)'}}>
-                IT systems enthusiast building practical tools for real-world asset management. ITdock was born from the frustration of managing IT inventory across spreadsheets — it exists to give IT teams a clean, fast, single source of truth.
-              </p>
-              <div className="flex gap-2 flex-wrap">
-                {[
-                  {label:'mahaz.uk', href:'https://mahaz.uk', icon: Globe},
-                  {label:'GitHub', href:'https://github.com/mahaz121', icon: Github},
-                  {label:'LinkedIn', href:'https://www.linkedin.com/in/mahaz-abdullah/', icon: ExternalLink},
-                  {label:'About ITdock', href:'/about', icon: Info},
-                ].map(({label, href, icon: Icon}) => (
-                  <a key={label} href={href} target={href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
-                    style={{background:'rgba(255,255,255,0.05)', color:'rgba(234,229,236,0.6)', border:'1px solid rgba(255,255,255,0.08)', textDecoration:'none'}}>
-                    <Icon className="h-3 w-3" />{label}
-                  </a>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* ── 7. Support section ── */}
       <section className="relative z-10 py-20 px-8" style={{background:'#0a0e17'}}>
         <div className="max-w-2xl mx-auto text-center fade-up">
@@ -653,25 +607,11 @@ function MahazLandingPage({ onLogin }) {
         </div>
       </section>
 
-      {/* ── 8. Final CTA ── */}
-      <section className="relative z-10 py-24 px-8 text-center" style={{background:'#050810'}}>
-        <div className="max-w-2xl mx-auto fade-up">
-          <h2 className="font-bold mb-4" style={{fontSize:'clamp(1.75rem,3.5vw,2.5rem)', color:'#eae5ec'}}>Ready to take control?</h2>
-          <p className="mb-8 text-base leading-relaxed" style={{color:'rgba(234,229,236,0.55)'}}>Sign in to your ITdock workspace and start managing your IT assets with clarity and confidence.</p>
-          <button onClick={openLogin} className="px-10 py-3.5 rounded-full text-base font-semibold text-white"
-            style={{background:'#0d9488', boxShadow:'0 4px 18px rgba(94,234,212,0.35)'}}>
-            Sign in to ITdock →
-          </button>
-        </div>
-      </section>
-
       {/* ── Footer ── */}
       <footer className="relative z-10 px-8 py-8" style={{background:'#0a0e17', borderTop:'1px solid rgba(255,255,255,0.06)'}}>
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-[#0d9488] flex items-center justify-center">
-              <Monitor className="h-3.5 w-3.5 text-white" />
-            </div>
+            <img src="/logo.png" alt="ITdock logo" className="w-7 h-7 object-contain" />
             <span className="font-bold text-sm" style={{color:'#eae5ec'}}>ITdock</span>
             <span className="text-xs px-2 py-0.5 rounded-full ml-1" style={{background:'rgba(94,234,212,0.1)', color:'#5eead4', border:'1px solid rgba(94,234,212,0.2)'}}>Open Source</span>
           </div>
