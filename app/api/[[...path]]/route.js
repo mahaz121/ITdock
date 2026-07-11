@@ -1894,7 +1894,21 @@ export async function POST(request, { params }) {
     asset.category_name = category?.name || asset.category_name;
     asset.brand = asset.brand_name || asset.brand || asset.manufacturer || '';
     asset.model = asset.model || asset.model_number || asset.name || '';
-    asset.specifications = asset.full_specification || asset.specifications || [asset.processor, asset.ram, asset.storage].filter(Boolean).join(' / ');
+    const specLines = [
+      ['Processor', asset.specs?.processor], ['RAM', asset.specs?.ram],
+      ['Storage', asset.specs?.storage], ['Graphics', asset.specs?.gpu],
+      ['Operating System', asset.specs?.os], ['IP Address', asset.ipAddress],
+      ['MAC Address', asset.specs?.macAddress]
+    ].filter(([, value]) => value).map(([label, value]) => `${label}: ${value}`);
+    const addonLines = (asset.addons || []).filter(a => a.status !== 'cancelled').map(a => {
+      const price = a.cost ? ` (${a.cost} ${a.currency || 'SAR'})` : '';
+      return `${a.name}${price}`;
+    });
+    asset.specifications = [
+      asset.full_specification || asset.specifications || '',
+      ...specLines,
+      addonLines.length ? `Add-ons / الملحقات: ${addonLines.join(', ')}` : ''
+    ].filter(Boolean).join(' | ');
     const count = await db.collection('custody_forms').countDocuments();
     const form = { id: uuidv4(), reference: `CF-${String(count + 1).padStart(5, '0')}`, status: 'Draft', employee_id: employee.id, employee: { name: employee.name, employee_id: employee.employee_id, id_number: employee.id_number || '', designation: employee.designation || '', project: project?.name || '', department: department?.name || '' }, asset_id: asset.id, asset: { asset_tag: asset.asset_tag, category: asset.category_name || asset.category, brand: asset.brand || '', model: asset.model || '', serial_number: asset.serial_number || '', specifications: asset.specifications || asset.full_specification || '' }, company_id: company.id, company: { name: company.name, name_ar: company.name_ar || '', logo: company.logo || '' }, cost: body.cost || '', currency: body.currency || 'SAR', template: templateDoc?.value || {}, generated_by: user.name, created_by: user.id, created_at: new Date().toISOString() };
     await db.collection('custody_forms').insertOne(form);
