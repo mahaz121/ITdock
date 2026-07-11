@@ -1894,12 +1894,19 @@ export async function POST(request, { params }) {
     asset.category_name = category?.name || asset.category_name;
     asset.brand = asset.brand_name || asset.brand || asset.manufacturer || '';
     asset.model = asset.model || asset.model_number || asset.name || '';
+    const specs = asset.specs || asset.hardware_specs || asset.hardwareSpecs || {};
+    const firstValue = (...values) => values.find(v => v !== undefined && v !== null && String(v).trim() !== '');
     const specLines = [
-      ['Processor', asset.specs?.processor], ['RAM', asset.specs?.ram],
-      ['Storage', asset.specs?.storage], ['Graphics', asset.specs?.gpu],
-      ['Operating System', asset.specs?.os], ['IP Address', asset.ipAddress],
-      ['MAC Address', asset.specs?.macAddress]
+      ['Processor', firstValue(specs.processor, specs.cpu, asset.processor, asset.cpu)],
+      ['RAM', firstValue(specs.ram, specs.memory, asset.ram, asset.memory)],
+      ['Storage', firstValue(specs.storage, specs.disk, asset.storage, asset.disk)],
+      ['Graphics', firstValue(specs.gpu, specs.graphics, specs.graphics_card, asset.gpu, asset.graphics)],
+      ['Operating System', firstValue(specs.os, specs.operating_system, asset.os, asset.operating_system)],
+      ['IP Address', firstValue(asset.ipAddress, asset.ip_address, specs.ipAddress, specs.ip_address)],
+      ['MAC Address', firstValue(specs.macAddress, specs.mac_address, asset.macAddress, asset.mac_address)]
     ].filter(([, value]) => value).map(([label, value]) => `${label}: ${value}`);
+    const knownSpecKeys = new Set(['processor','cpu','ram','memory','storage','disk','gpu','graphics','graphics_card','os','operating_system','ipAddress','ip_address','macAddress','mac_address']);
+    const extraSpecLines = Object.entries(specs).filter(([key, value]) => !knownSpecKeys.has(key) && value !== undefined && value !== null && String(value).trim() !== '').map(([key, value]) => `${key.replace(/_/g, ' ')}: ${value}`);
     const addonLines = (asset.addons || []).filter(a => a.status !== 'cancelled').map(a => {
       const price = a.cost ? ` (${a.cost} ${a.currency || 'SAR'})` : '';
       return `${a.name}${price}`;
@@ -1907,6 +1914,7 @@ export async function POST(request, { params }) {
     asset.specifications = [
       asset.full_specification || asset.specifications || '',
       ...specLines,
+      ...extraSpecLines,
       addonLines.length ? `Add-ons / الملحقات: ${addonLines.join(', ')}` : ''
     ].filter(Boolean).join(' | ');
     const count = await db.collection('custody_forms').countDocuments();
