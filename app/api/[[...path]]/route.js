@@ -1152,7 +1152,7 @@ export async function GET(request, { params }) {
     const filter = {};
     const paginated = url.searchParams.get('paginated') === 'true';
     const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
-    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '50', 10) || 50));
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
     const company_id = url.searchParams.get('company_id');
     const project_id = url.searchParams.get('project_id');
     const location_id = url.searchParams.get('location_id');

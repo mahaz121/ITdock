@@ -1765,6 +1765,37 @@ function Dashboard({ onNavigate, onNavigateToBills }) {
   );
 }
 
+const EMPLOYEE_PAGE_SIZE = 40;
+
+function ITdockPageLoader({ label = 'Loading employees' }) {
+  return (
+    <div className="min-h-[360px] flex items-center justify-center overflow-hidden relative rounded-xl" style={{background:'#050810'}}>
+      <style>{`
+        @keyframes pageLoaderOrbit { to { transform: rotate(360deg); } }
+        @keyframes pageLoaderPulse { 0%,100% { transform:scale(.96); opacity:.72; } 50% { transform:scale(1.04); opacity:1; } }
+        @keyframes pageLoaderScan { 0% { transform:translateX(-110%); } 100% { transform:translateX(310%); } }
+        @keyframes pageLoaderBlink { 0%,100% { opacity:.3; } 50% { opacity:1; } }
+      `}</style>
+      <div className="absolute inset-0 opacity-30" style={{backgroundImage:'linear-gradient(rgba(94,234,212,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(94,234,212,.035) 1px, transparent 1px)', backgroundSize:'36px 36px', maskImage:'radial-gradient(circle at center, black, transparent 68%)'}} />
+      <div className="text-center relative z-10">
+        <div className="relative w-24 h-24 mx-auto mb-6 flex items-center justify-center">
+          <div className="absolute inset-0 rounded-full" style={{border:'1px solid rgba(94,234,212,.12)', boxShadow:'0 0 45px rgba(13,148,136,.16)'}} />
+          <div className="absolute inset-2 rounded-full" style={{border:'1px solid transparent', borderTopColor:'#5eead4', borderRightColor:'rgba(94,234,212,.18)', animation:'pageLoaderOrbit 1.6s linear infinite'}} />
+          <div className="absolute inset-5 rounded-full" style={{background:'rgba(94,234,212,.055)', border:'1px solid rgba(94,234,212,.14)', animation:'pageLoaderPulse 2s ease-in-out infinite'}} />
+          <img src="/logo.png" alt="ITdock logo" className="w-12 h-12 object-contain relative z-10" />
+        </div>
+        <p className="text-sm font-semibold tracking-[0.22em] uppercase" style={{color:'#eae5ec'}}>{label}</p>
+        <div className="w-44 h-px mx-auto mt-4 overflow-hidden" style={{background:'rgba(94,234,212,.12)'}}>
+          <div className="w-16 h-full" style={{background:'linear-gradient(90deg, transparent, #5eead4, transparent)', animation:'pageLoaderScan 1.45s ease-in-out infinite'}} />
+        </div>
+        <div className="flex justify-center gap-1.5 mt-4" aria-hidden="true">
+          {[0,1,2].map(index => <span key={index} className="w-1 h-1 rounded-full" style={{background:'#5eead4', animation:`pageLoaderBlink 1.2s ${index * .18}s ease-in-out infinite`}} />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Employees List
 function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }) {
   const [employees, setEmployees] = useState([]);
@@ -1788,6 +1819,8 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
   const [totalEmployees, setTotalEmployees] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const [employeeLoading, setEmployeeLoading] = useState(true);
+  const employeeLoadRequest = React.useRef(0);
   const confirm = useConfirm();
 
   const canEdit = ['super_admin', 'it_admin'].includes(user.role);
@@ -1806,6 +1839,8 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
   };
 
   const loadData = async () => {
+    const requestId = ++employeeLoadRequest.current;
+    setEmployeeLoading(true);
     try {
       const params = new URLSearchParams();
       Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
@@ -1813,12 +1848,17 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
       if (showArchived) params.set('archived', 'true');
       params.set('paginated', 'true');
       params.set('page', String(currentPage));
-      params.set('page_size', '50');
+      params.set('page_size', String(EMPLOYEE_PAGE_SIZE));
       const emps = await api.get(`employees?${params.toString()}`);
+      if (requestId !== employeeLoadRequest.current) return;
       setEmployees(emps.items || []);
       setTotalEmployees(emps.total || 0);
       setTotalPages(emps.total_pages || 1);
-    } catch (err) { toast.error('Failed to load employees'); }
+    } catch (err) {
+      if (requestId === employeeLoadRequest.current) toast.error('Failed to load employees');
+    } finally {
+      if (requestId === employeeLoadRequest.current) setEmployeeLoading(false);
+    }
   };
 
   const openDialog = () => {
@@ -1991,6 +2031,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
 
       <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(k, v) => { setFilters({...filters, [k]: v}); setCurrentPage(1); }} onClear={() => { setFilters({}); setCurrentPage(1); }} />
 
+      {employeeLoading ? <ITdockPageLoader /> : <>
       <Card>
         <Table>
           <TableHeader>
@@ -2099,7 +2140,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
 
       <div className="flex items-center justify-between mt-4">
         <p className="text-sm" style={{color:'rgba(234,229,236,0.55)'}}>
-          {totalEmployees === 0 ? 'No employees' : `Showing ${(currentPage - 1) * 50 + 1}-${Math.min(currentPage * 50, totalEmployees)} of ${totalEmployees}`}
+          {totalEmployees === 0 ? 'No employees' : `Showing ${(currentPage - 1) * EMPLOYEE_PAGE_SIZE + 1}-${Math.min(currentPage * EMPLOYEE_PAGE_SIZE, totalEmployees)} of ${totalEmployees}`}
         </p>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}><ChevronLeft className="h-4 w-4 mr-1" />Previous</Button>
@@ -2107,6 +2148,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
           <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
         </div>
       </div>
+      </>}
 
       {/* Add Employee Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
