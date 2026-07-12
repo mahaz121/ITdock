@@ -1765,7 +1765,7 @@ function Dashboard({ onNavigate, onNavigateToBills }) {
 }
 
 // Employees List
-function EmployeesList({ user, onViewEmployee, onCreateEmployee }) {
+function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }) {
   const [employees, setEmployees] = useState([]);
   const [filterOptions, setFilterOptions] = useState({});
   const [filters, setFilters] = useState({});
@@ -1946,6 +1946,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee }) {
                       {inlineEditId !== emp.id && <Button size="sm" variant="ghost" onClick={() => onViewEmployee(emp.id)}><Eye className="h-4 w-4" /></Button>}
                       {canEdit && inlineEditId !== emp.id && (
                         <>
+                          <Button size="sm" variant="ghost" onClick={() => onAssignAsset(emp)} title="Assign asset" className="h-8 px-2 text-xs" style={{color:'#5eead4'}}><Link2 className="h-4 w-4 mr-1" />Assign Asset</Button>
                           <Button size="sm" variant="ghost" onClick={() => startInlineEdit(emp)} title="Edit inline"><Pencil className="h-4 w-4" /></Button>
                           <Button size="sm" variant="ghost" onClick={() => handleDelete(emp.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                         </>
@@ -2866,7 +2867,7 @@ function PendingApprovalsPage({ user, onViewAsset, onViewEmployee }) {
 }
 
 // Assets List
-function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter }) {
+function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assignmentTarget, onAssignmentComplete, onCancelAssignment }) {
   const [assets, setAssets] = useState([]);
   const [filterOptions, setFilterOptions] = useState({});
   const [filters, setFilters] = useState({});
@@ -2878,6 +2879,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter }) {
   const [showIoTOnly, setShowIoTOnly] = useState(false);
   const [assetInlineEditId, setAssetInlineEditId] = useState(null);
   const [assetInlineEditData, setAssetInlineEditData] = useState({});
+  const [assigningAssetId, setAssigningAssetId] = useState(null);
 
   const canEdit = ['super_admin', 'it_admin'].includes(user.role);
 
@@ -2926,11 +2928,39 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter }) {
       return;
     }
     try {
-      await api.post('assets', formData);
+      const createdAsset = await api.post('assets', formData);
+      if (assignmentTarget) {
+        try {
+          await api.post('assignments', { asset_id: createdAsset.id, employee_id: assignmentTarget.id, assignment_type: 'Normal' });
+          toast.success(`Asset created and assigned to ${assignmentTarget.name}`);
+          setDialogOpen(false);
+          onAssignmentComplete(assignmentTarget.id);
+        } catch (assignError) {
+          setDialogOpen(false);
+          loadData();
+          toast.error(`Asset was created but could not be assigned: ${assignError.message}`);
+        }
+        return;
+      }
       toast.success('Asset created');
       setDialogOpen(false);
       loadData();
     } catch (err) { toast.error(err.message); }
+  };
+
+  const assignExistingAsset = async (asset) => {
+    if (!assignmentTarget || assigningAssetId) return;
+    setAssigningAssetId(asset.id);
+    try {
+      await api.post('assignments', { asset_id: asset.id, employee_id: assignmentTarget.id, assignment_type: 'Normal' });
+      toast.success(`${asset.asset_tag} assigned to ${assignmentTarget.name}`);
+      onAssignmentComplete(assignmentTarget.id);
+    } catch (err) {
+      toast.error(err.message);
+      loadData();
+    } finally {
+      setAssigningAssetId(null);
+    }
   };
 
   const startAssetInlineEdit = (a) => {
@@ -3013,9 +3043,20 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter }) {
         <div className="flex items-center space-x-3">
           <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#AEAEB2]" /><Input placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 w-64" /></div>
           <Button onClick={exportAssets} variant="outline" size="sm"><Download className="h-4 w-4 mr-2" />Export</Button>
-          {canEdit && <Button onClick={openDialog} className="bg-[#0d9488] hover:bg-[#0062CC]"><Plus className="h-4 w-4 mr-2" />Add Asset</Button>}
+          {canEdit && <Button onClick={openDialog} className="bg-[#0d9488] hover:bg-[#0062CC]"><Plus className="h-4 w-4 mr-2" />{assignmentTarget ? 'Add & Assign Asset' : 'Add Asset'}</Button>}
         </div>
       </div>
+
+      {assignmentTarget && (
+        <div className="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl" style={{background:'rgba(94,234,212,0.08)', border:'1px solid rgba(94,234,212,0.22)'}}>
+          <UserPlus className="h-5 w-5 shrink-0" style={{color:'#5eead4'}} />
+          <div>
+            <p className="text-sm font-semibold" style={{color:'#eae5ec'}}>Assign an asset to {assignmentTarget.name}</p>
+            <p className="text-xs" style={{color:'rgba(234,229,236,0.5)'}}>Search for an available asset below, or create a new one to assign it automatically.</p>
+          </div>
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={onCancelAssignment}><X className="h-4 w-4 mr-1" />Cancel</Button>
+        </div>
+      )}
 
       {/* Bills filter indicator */}
       {billsFilter && (
@@ -3129,6 +3170,11 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter }) {
                   })() : <span className="text-xs" style={{color:'rgba(234,229,236,0.4)'}}>—</span>) : <Badge variant="outline" className={a.warranty_status === 'Active' ? 'text-green-600' : a.warranty_status === 'Expired' ? 'text-red-600' : ''}>{a.warranty_status}</Badge>}</TableCell>
                   <TableCell onClick={e => e.stopPropagation()}>
                     <div className="flex space-x-1">
+                      {assignmentTarget && !a.assigned_to && ['In Stock', 'Available'].includes(a.status) && assetInlineEditId !== a.id && (
+                        <Button size="sm" onClick={() => assignExistingAsset(a)} disabled={!!assigningAssetId} className="h-8 px-2 text-xs bg-[#0d9488] hover:bg-[#0f766e] text-white">
+                          <UserPlus className="h-4 w-4 mr-1" />{assigningAssetId === a.id ? 'Assigning…' : 'Assign'}
+                        </Button>
+                      )}
                       {assetInlineEditId !== a.id && <Button size="sm" variant="ghost" onClick={() => onViewAsset(a.id)}><Eye className="h-4 w-4" /></Button>}
                       {canEdit && assetInlineEditId !== a.id && (
                         <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); startAssetInlineEdit(a); }} title="Edit asset"><Pencil className="h-4 w-4" /></Button>
@@ -3371,7 +3417,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter }) {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSubmit} className="bg-[#0d9488]">Create</Button>
+            <Button onClick={handleSubmit} className="bg-[#0d9488]">{assignmentTarget ? 'Create & Assign' : 'Create'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -6430,6 +6476,7 @@ export default function App() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(null);
   const [selectedAssetId, setSelectedAssetId] = useState(null);
   const [assetsBillsFilter, setAssetsBillsFilter] = useState(false);
+  const [assetAssignmentTarget, setAssetAssignmentTarget] = useState(null);
 
   useEffect(() => { checkAuth(); }, []);
 
@@ -6454,10 +6501,20 @@ export default function App() {
     setActiveTab(tab);
     setSelectedEmployeeId(null);
     setSelectedAssetId(null);
+    if (tab !== 'assets') setAssetAssignmentTarget(null);
   }, []);
 
   const viewEmployee = (id) => { setSelectedEmployeeId(id); setActiveTab('employee-detail'); };
   const viewAsset = (id) => { setSelectedAssetId(id); setActiveTab('asset-detail'); };
+  const startAssetAssignment = (employee) => {
+    setAssetsBillsFilter(false);
+    setAssetAssignmentTarget({ id: employee.id, name: employee.name });
+    setActiveTab('assets');
+  };
+  const finishAssetAssignment = (employeeId) => {
+    setAssetAssignmentTarget(null);
+    viewEmployee(employeeId);
+  };
 
   // Handle notification click - navigate to appropriate page
   const handleNotificationClick = (notif) => {
@@ -6513,9 +6570,9 @@ export default function App() {
         <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden" style={{background:'#0a0e17', color:'#eae5ec'}}>
           <ErrorBoundary key={activeTab}>
           {activeTab === 'dashboard' && <Dashboard onNavigate={navigateToTab} onNavigateToBills={() => { setAssetsBillsFilter(true); navigateToTab('assets'); }} />}
-          {activeTab === 'employees' && <EmployeesList user={user} onViewEmployee={viewEmployee} onCreateEmployee={() => {}} />}
+          {activeTab === 'employees' && <EmployeesList user={user} onViewEmployee={viewEmployee} onCreateEmployee={() => {}} onAssignAsset={startAssetAssignment} />}
           {activeTab === 'employee-detail' && <EmployeeDetail employeeId={selectedEmployeeId} user={user} onBack={() => navigateToTab('employees')} onViewAsset={viewAsset} />}
-          {activeTab === 'assets' && <AssetsList user={user} onViewAsset={viewAsset} billsFilter={assetsBillsFilter} onClearBillsFilter={() => setAssetsBillsFilter(false)} />}
+          {activeTab === 'assets' && <AssetsList user={user} onViewAsset={viewAsset} billsFilter={assetsBillsFilter} onClearBillsFilter={() => setAssetsBillsFilter(false)} assignmentTarget={assetAssignmentTarget} onAssignmentComplete={finishAssetAssignment} onCancelAssignment={() => setAssetAssignmentTarget(null)} />}
           {activeTab === 'asset-detail' && <AssetDetail assetId={selectedAssetId} user={user} onBack={() => navigateToTab('assets')} onViewEmployee={viewEmployee} onNavigateToEmployeeCreate={() => navigateToTab('employees')} onNavigateToMaintenance={() => setActiveTab('maintenance')} />}
           {activeTab === 'extensions' && <ExtensionsPage user={user} />}
           {activeTab === 'assignments' && <AssignmentsPage user={user} onViewAsset={viewAsset} />}
