@@ -1393,6 +1393,7 @@ function Sidebar({ activeTab, setActiveTab, user, onLogout, notificationCount })
     { id: 'assets', label: 'Assets', icon: Monitor },
     { id: 'employees', label: 'Employees', icon: Users },
     { id: 'extensions', label: 'Extensions', icon: Phone },
+    { id: 'company-emails', label: 'Company Emails', icon: Mail },
     { id: 'assignments', label: 'Assignments', icon: Link2 },
     { id: 'custody', label: 'Custody Forms', icon: FileText },
     { id: 'maintenance', label: 'Maintenance', icon: Wrench },
@@ -5107,6 +5108,95 @@ function MaintenancePage({ user }) {
   );
 }
 
+// Company Emails — employee-backed email directory
+function CompanyEmailsPage({ user }) {
+  const [entries, setEntries] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [filterOptions, setFilterOptions] = useState({});
+  const [filters, setFilters] = useState({});
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ employee_id:'', email:'' });
+  const [saving, setSaving] = useState(false);
+  const confirm = useConfirm();
+  const canEdit = ['super_admin', 'it_admin'].includes(user.role);
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [emailData, employeeData, options] = await Promise.all([
+        api.get('company-emails'), api.get('employees?status=Active'), api.get('filters')
+      ]);
+      setEntries(emailData || []);
+      setEmployees(employeeData || []);
+      setFilterOptions(options || {});
+    } catch (err) { toast.error('Failed to load company emails'); }
+    finally { setLoading(false); }
+  };
+
+  const openAdd = () => { setEditing(null); setForm({employee_id:'',email:''}); setDialogOpen(true); };
+  const openEdit = (entry) => { setEditing(entry); setForm({employee_id:entry.employee_id,email:entry.email}); setDialogOpen(true); };
+
+  const save = async () => {
+    if (!form.employee_id || !form.email?.trim()) return toast.error('Employee and email are required');
+    setSaving(true);
+    try {
+      if (editing) await api.put(`company-emails/${editing.employee_id}`, {email:form.email});
+      else await api.post('company-emails', form);
+      toast.success(editing ? 'Company email updated' : 'Company email assigned');
+      setDialogOpen(false);
+      loadData();
+    } catch (err) { toast.error(err.message); }
+    finally { setSaving(false); }
+  };
+
+  const remove = async (entry) => {
+    const ok = await confirm({title:'Remove Company Email',description:`Remove ${entry.email} from ${entry.fullName}?`,confirmLabel:'Remove'});
+    if (!ok) return;
+    try { await api.delete(`company-emails/${entry.employee_id}`); toast.success('Company email removed'); loadData(); }
+    catch (err) { toast.error(err.message); }
+  };
+
+  const availableEmployees = employees.filter(employee => !employee.company_email || employee.id === form.employee_id);
+  const filtered = entries.filter(entry => {
+    if (filters.company_id && entry.company_id !== filters.company_id) return false;
+    if (filters.project_id && entry.project_id !== filters.project_id) return false;
+    if (filters.department_id && entry.department_id !== filters.department_id) return false;
+    if (filters.location_id && entry.location_id !== filters.location_id) return false;
+    if (search) {
+      const query = search.toLowerCase();
+      if (!entry.email?.toLowerCase().includes(query) && !entry.fullName?.toLowerCase().includes(query)) return false;
+    }
+    return true;
+  });
+
+  return (
+    <div className="p-8">
+      <div className="flex items-center justify-between mb-6">
+        <div><h1 className="text-2xl font-bold" style={{color:'#eae5ec'}}>Company Emails</h1><p className="text-sm mt-0.5" style={{color:'rgba(234,229,236,0.5)'}}>Employee company email directory</p></div>
+        {canEdit && <Button onClick={openAdd} className="bg-[#0d9488]"><Plus className="h-4 w-4 mr-2" />Add Company Email</Button>}
+      </div>
+      <div className="relative mb-4"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{color:'rgba(234,229,236,0.4)'}} /><Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search email or employee..." className="pl-9 max-w-md" /></div>
+      <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(key,value)=>setFilters({...filters,[key]:value})} onClear={()=>setFilters({})} />
+      <Card><Table>
+        <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Full Name</TableHead><TableHead>Company</TableHead><TableHead>Project</TableHead><TableHead>Department</TableHead><TableHead>Location</TableHead>{canEdit&&<TableHead>Actions</TableHead>}</TableRow></TableHeader>
+        <TableBody>{loading ? <TableRow><TableCell colSpan={canEdit?7:6} className="text-center py-10">Loading...</TableCell></TableRow> : filtered.length===0 ? <TableRow><TableCell colSpan={canEdit?7:6} className="text-center py-10" style={{color:'rgba(234,229,236,0.4)'}}>No company emails found</TableCell></TableRow> : filtered.map(entry=><TableRow key={entry.employee_id}>
+          <TableCell><a href={`mailto:${entry.email}`} style={{color:'#5eead4'}}>{entry.email}</a></TableCell><TableCell className="font-medium">{entry.fullName}</TableCell><TableCell>{entry.company||'—'}</TableCell><TableCell>{entry.project||'—'}</TableCell><TableCell>{entry.department||'—'}</TableCell><TableCell>{entry.location||'—'}</TableCell>
+          {canEdit&&<TableCell><Button size="sm" variant="ghost" onClick={()=>openEdit(entry)}><Pencil className="h-4 w-4" /></Button><Button size="sm" variant="ghost" onClick={()=>remove(entry)}><Trash2 className="h-4 w-4 text-red-500" /></Button></TableCell>}
+        </TableRow>)}</TableBody>
+      </Table></Card>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{editing?'Edit':'Add'} Company Email</DialogTitle><DialogDescription>Profile details are inherited from the selected employee.</DialogDescription></DialogHeader><div className="space-y-4">
+        <div><Label>Employee *</Label><SearchableSelect options={availableEmployees.map(e=>({id:e.id,name:`${e.name} (${e.employee_id})`}))} value={form.employee_id} onChange={value=>setForm({...form,employee_id:value})} placeholder="Select employee..." disabled={!!editing} /></div>
+        <div><Label>Company Email *</Label><Input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="name@company.com" /></div>
+      </div><DialogFooter><Button variant="outline" onClick={()=>setDialogOpen(false)}>Cancel</Button><Button onClick={save} disabled={saving} className="bg-[#0d9488]">{saving?'Saving…':editing?'Save Changes':'Assign Email'}</Button></DialogFooter></DialogContent></Dialog>
+    </div>
+  );
+}
+
 // Extensions Page — telephone extension directory
 function ExtensionsPage({ user }) {
   const [extensions, setExtensions] = useState([]);
@@ -6670,6 +6760,7 @@ export default function App() {
           {activeTab === 'assets' && <AssetsList user={user} onViewAsset={viewAsset} billsFilter={assetsBillsFilter} onClearBillsFilter={() => setAssetsBillsFilter(false)} assignmentTarget={assetAssignmentTarget} onAssignmentComplete={finishAssetAssignment} onCancelAssignment={() => setAssetAssignmentTarget(null)} />}
           {activeTab === 'asset-detail' && <AssetDetail assetId={selectedAssetId} user={user} onBack={() => navigateToTab('assets')} onViewEmployee={viewEmployee} onNavigateToEmployeeCreate={() => navigateToTab('employees')} onNavigateToMaintenance={() => setActiveTab('maintenance')} />}
           {activeTab === 'extensions' && <ExtensionsPage user={user} />}
+          {activeTab === 'company-emails' && <CompanyEmailsPage user={user} />}
           {activeTab === 'assignments' && <AssignmentsPage user={user} onViewAsset={viewAsset} />}
           {activeTab === 'custody' && <CustodyFormsPage user={user} api={api} />}
           {activeTab === 'maintenance' && <MaintenancePage user={user} />}

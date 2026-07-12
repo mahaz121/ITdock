@@ -590,6 +590,29 @@ export async function GET(request, { params }) {
     catch { return json([]); }
   }
 
+  // Company Emails — derived directly from employee records
+  if (route === 'company-emails') {
+    const employees = await db.collection('employees').find({ company_email: { $exists: true, $type: 'string', $ne: '' }, archived: { $ne: true } }).sort({ name: 1 }).toArray();
+    const [companies, projects, departments, locations] = await Promise.all([
+      db.collection('companies').find({}).toArray(),
+      db.collection('projects').find({}).toArray(),
+      db.collection('departments').find({}).toArray(),
+      db.collection('locations').find({}).toArray()
+    ]);
+    const companyMap = Object.fromEntries(companies.map(x => [x.id, x.name]));
+    const projectMap = Object.fromEntries(projects.map(x => [x.id, x.name]));
+    const departmentMap = Object.fromEntries(departments.map(x => [x.id, x.name]));
+    const locationMap = Object.fromEntries(locations.map(x => [x.id, x.name]));
+    return json(employees.map(employee => ({
+      id: employee.id, employee_id: employee.id, email: employee.company_email,
+      fullName: employee.name, company_id: employee.company_id || null,
+      project_id: employee.project_id || null, department_id: employee.department_id || null,
+      location_id: employee.location_id || null,
+      company: companyMap[employee.company_id] || '', project: projectMap[employee.project_id] || '',
+      department: departmentMap[employee.department_id] || '', location: locationMap[employee.location_id] || ''
+    })));
+  }
+
   // Categories (for assets) - GET
   if (route === 'categories') {
     try { return json(await db.collection('categories').find({}).toArray()); }
@@ -2108,6 +2131,12 @@ export async function POST(request, { params }) {
     
     const existing = await db.collection('employees').findOne({ employee_id });
     if (existing) return error('Employee ID already exists');
+    const companyEmail = rest.company_email?.trim().toLowerCase() || '';
+    if (companyEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(companyEmail)) return error('Enter a valid company email address');
+    if (companyEmail) {
+      const duplicateEmail = await db.collection('employees').findOne({ company_email: { $regex: `^${companyEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
+      if (duplicateEmail) return error('Company email is already assigned to another employee', 409);
+    }
     
     // Validate manager hierarchy
     if (manager_id) {
@@ -2130,7 +2159,7 @@ export async function POST(request, { params }) {
       vacation_start_date: null,
       vacation_end_date: null,
       personal_email: rest.personal_email || '',
-      company_email: rest.company_email || '',
+      company_email: companyEmail,
       fingerprint_id: rest.fingerprint_id || '',
       ad_username: rest.ad_username || '',
       keys_provided: rest.keys_provided || false,
@@ -3222,6 +3251,25 @@ export async function POST(request, { params }) {
     return json(attachment, 201);
   }
 
+  // POST /api/company-emails — assign an email to an employee
+  if (route === 'company-emails') {
+    const roles = normalizeRoles(user.roles || user.role);
+    if (!roles.some(r => ['admin', 'asset_manager'].includes(r))) return error('Forbidden', 403);
+    const body = await request.json();
+    const employeeId = body.employee_id;
+    const email = body.email?.trim().toLowerCase();
+    if (!employeeId || !email) return error('Employee and email are required');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('Enter a valid email address');
+    const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true } });
+    if (!employee) return error('Employee not found', 404);
+    if (employee.company_email) return error('This employee already has a company email', 409);
+    const duplicate = await db.collection('employees').findOne({ company_email: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, id: { $ne: employeeId } });
+    if (duplicate) return error('This email is already assigned to another employee', 409);
+    await db.collection('employees').updateOne({ id: employeeId }, { $set: { company_email: email, updated_at: new Date().toISOString() } });
+    await logAudit(db, user.id, 'ASSIGN_COMPANY_EMAIL', 'employee', employeeId, { email });
+    return json({ success: true, employee_id: employeeId, email }, 201);
+  }
+
   // POST /api/extensions — create
   if (route === 'extensions') {
     if (!['super_admin', 'it_admin'].includes(user.role)) return error('Forbidden', 403);
@@ -3519,6 +3567,15 @@ export async function PUT(request, { params }) {
     
     const employee = await db.collection('employees').findOne({ id: empId });
     if (!employee) return error('Employee not found', 404);
+    if (body.company_email !== undefined) {
+      const companyEmail = body.company_email?.trim().toLowerCase() || '';
+      if (companyEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(companyEmail)) return error('Enter a valid company email address');
+      if (companyEmail) {
+        const duplicateEmail = await db.collection('employees').findOne({ company_email: { $regex: `^${companyEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, id: { $ne: empId } });
+        if (duplicateEmail) return error('Company email is already assigned to another employee', 409);
+      }
+      body.company_email = companyEmail;
+    }
     
     // Validate manager hierarchy if manager_id is being updated
     if (body.manager_id && body.manager_id !== employee.manager_id) {
@@ -3745,6 +3802,23 @@ export async function PUT(request, { params }) {
     );
     await logAudit(db, user.id, 'UPDATE_ADDON', 'asset', assetId, { addonId, name: updated.name });
     return json({ success: true, addon: updated });
+  }
+
+  // PUT /api/company-emails/:employeeId — update employee company email
+  if (pathSegments[0] === 'company-emails' && pathSegments.length === 2) {
+    const roles = normalizeRoles(user.roles || user.role);
+    if (!roles.some(r => ['admin', 'asset_manager'].includes(r))) return error('Forbidden', 403);
+    const employeeId = pathSegments[1];
+    const body = await request.json();
+    const email = body.email?.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('Enter a valid email address');
+    const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true } });
+    if (!employee) return error('Employee not found', 404);
+    const duplicate = await db.collection('employees').findOne({ company_email: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, id: { $ne: employeeId } });
+    if (duplicate) return error('This email is already assigned to another employee', 409);
+    await db.collection('employees').updateOne({ id: employeeId }, { $set: { company_email: email, updated_at: new Date().toISOString() } });
+    await logAudit(db, user.id, 'UPDATE_COMPANY_EMAIL', 'employee', employeeId, { email });
+    return json({ success: true, employee_id: employeeId, email });
   }
 
   // PUT /api/extensions/:id — update
@@ -4009,6 +4083,18 @@ export async function DELETE(request, { params }) {
       await db.collection('assets').updateOne({ id: assetId }, { $pull: { addons: { id: addonId } } });
       await logAudit(db, user.id, 'DELETE_ADDON', 'asset', assetId, { addonId });
     }
+    return json({ success: true });
+  }
+
+  // DELETE /api/company-emails/:employeeId — clear employee company email
+  if (pathSegments[0] === 'company-emails' && pathSegments.length === 2) {
+    const roles = normalizeRoles(user.roles || user.role);
+    if (!roles.some(r => ['admin', 'asset_manager'].includes(r))) return error('Forbidden', 403);
+    const employeeId = pathSegments[1];
+    const employee = await db.collection('employees').findOne({ id: employeeId });
+    if (!employee) return error('Employee not found', 404);
+    await db.collection('employees').updateOne({ id: employeeId }, { $set: { company_email: '', updated_at: new Date().toISOString() } });
+    await logAudit(db, user.id, 'REMOVE_COMPANY_EMAIL', 'employee', employeeId, { email: employee.company_email || '' });
     return json({ success: true });
   }
 
