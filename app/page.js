@@ -1409,7 +1409,7 @@ function Sidebar({ activeTab, setActiveTab, user, onLogout, notificationCount })
     menuItems.push({ id: 'users', label: 'Users', icon: Settings2 });
   }
 
-  menuItems.push({ id: 'about', label: 'About Us', icon: Info });
+  menuItems.push({ id: 'about', label: 'About Author', icon: Info });
 
   const handleNavClick = (id) => setActiveTab(id);
 
@@ -6287,7 +6287,7 @@ function UsersPage({ currentUser }) {
 }
 
 // Main App
-// About Us Page (in-app)
+// About Author Page (in-app)
 function AboutDeveloperPage() {
   const features = [
     { icon: Monitor, label: 'Physical Asset Tracking', desc: 'Laptops, desktops, monitors, and peripherals' },
@@ -6355,26 +6355,21 @@ function AboutDeveloperPage() {
 
       {/* Section 3 — Author */}
       <div>
-        <h2 className="font-semibold text-base mb-3" style={{color:'#eae5ec'}}>Author</h2>
-        <div className="rounded-xl p-5 flex items-center gap-4" style={{background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)'}}>
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold shrink-0" style={{background:'linear-gradient(135deg, #0d9488, #5eead4)', color:'#050810'}}>M</div>
+        <h2 className="font-semibold text-base mb-3" style={{color:'#eae5ec'}}>About Author</h2>
+        <div className="rounded-xl p-5" style={{background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)'}}>
           <div>
             <p className="font-semibold" style={{color:'#eae5ec'}}>Riaz Rahman Bhuyan (Mahaz)</p>
-            <p className="text-xs mt-0.5" style={{color:'rgba(234,229,236,0.5)'}}>IT systems enthusiast building practical tools for real-world challenges.</p>
+            <p className="text-sm mt-1" style={{color:'#5eead4'}}>Cloud Engineer</p>
+            <div className="flex flex-wrap gap-2 mt-4">
+              {links.map(({icon: Icon, label, href}) => (
+                <a key={label} href={href} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium"
+                  style={{background:'rgba(255,255,255,0.04)', color:'#eae5ec', border:'1px solid rgba(255,255,255,0.10)', textDecoration:'none'}}>
+                  <Icon className="h-3.5 w-3.5" style={{color:'#5eead4'}} />{label}
+                </a>
+              ))}
+            </div>
           </div>
-        </div>
-      </div>
-
-      {/* Section 4 — Connect */}
-      <div>
-        <h2 className="font-semibold text-base mb-3" style={{color:'#eae5ec'}}>Connect</h2>
-        <div className="flex flex-wrap gap-2">
-          {links.map(l => (
-            <button key={l.label} onClick={() => window.open(l.href, '_blank')}
-              style={{background:'rgba(255,255,255,0.04)', color:'#eae5ec', border:'1px solid rgba(255,255,255,0.10)', borderRadius:'8px', padding:'7px 14px', fontSize:'13px', fontWeight:500, cursor:'pointer'}}>
-              {l.label}
-            </button>
-          ))}
         </div>
       </div>
 
