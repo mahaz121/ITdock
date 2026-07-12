@@ -2279,10 +2279,11 @@ export async function POST(request, { params }) {
     
     // Validate employee (unless 'company')
     let employeeName = 'Company';
+    let employeeRecord = null;
     if (employee_id !== 'company') {
-      const employee = await db.collection('employees').findOne({ id: employee_id });
-      if (!employee) return error('Employee not found', 404);
-      employeeName = employee.name;
+      employeeRecord = await db.collection('employees').findOne({ id: employee_id });
+      if (!employeeRecord) return error('Employee not found', 404);
+      employeeName = employeeRecord.name;
     }
     
     // Determine status
@@ -2309,8 +2310,15 @@ export async function POST(request, { params }) {
       status: newStatus,
       assigned_to: employee_id
     };
-    if (project_id) assetUpdates.project_id = project_id;
-    if (location_id) assetUpdates.location_id = location_id;
+    // Employee assignments always inherit the employee's project and location.
+    // Company assignments retain the explicitly supplied values for backwards compatibility.
+    if (employeeRecord) {
+      assetUpdates.project_id = employeeRecord.project_id || null;
+      assetUpdates.location_id = employeeRecord.location_id || null;
+    } else {
+      if (project_id) assetUpdates.project_id = project_id;
+      if (location_id) assetUpdates.location_id = location_id;
+    }
     
     await db.collection('assignments').insertOne(assignment);
     await db.collection('assets').updateOne({ id: asset_id }, { $set: assetUpdates });

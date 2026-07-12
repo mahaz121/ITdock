@@ -2918,7 +2918,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
   };
 
   const openDialog = () => {
-    setFormData({ asset_tag: '', asset_type: 'Physical', category: 'Laptop', brand: '', vendor_name: '', receive_date: '', warranty_applicable: 'N-A', warranty_end_date: '', serial_number: '', connection_type: 'Wired', company_id: '', project_id: '', location_id: '', notes: '' });
+    setFormData({ asset_tag: '', asset_type: 'Physical', category: 'Laptop', brand: '', vendor_name: '', receive_date: '', warranty_applicable: 'N-A', warranty_end_date: '', serial_number: '', connection_type: 'Wired', company_id: '', project_id: assignmentTarget?.project_id || '', location_id: assignmentTarget?.location_id || '', notes: '' });
     setDialogOpen(true);
   };
 
@@ -2931,7 +2931,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
       const createdAsset = await api.post('assets', formData);
       if (assignmentTarget) {
         try {
-          await api.post('assignments', { asset_id: createdAsset.id, employee_id: assignmentTarget.id, assignment_type: 'Normal' });
+          await api.post('assignments', { asset_id: createdAsset.id, employee_id: assignmentTarget.id, assignment_type: 'Normal', project_id: assignmentTarget.project_id, location_id: assignmentTarget.location_id });
           toast.success(`Asset created and assigned to ${assignmentTarget.name}`);
           setDialogOpen(false);
           onAssignmentComplete(assignmentTarget.id);
@@ -2952,7 +2952,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
     if (!assignmentTarget || assigningAssetId) return;
     setAssigningAssetId(asset.id);
     try {
-      await api.post('assignments', { asset_id: asset.id, employee_id: assignmentTarget.id, assignment_type: 'Normal' });
+      await api.post('assignments', { asset_id: asset.id, employee_id: assignmentTarget.id, assignment_type: 'Normal', project_id: assignmentTarget.project_id, location_id: assignmentTarget.location_id });
       toast.success(`${asset.asset_tag} assigned to ${assignmentTarget.name}`);
       onAssignmentComplete(assignmentTarget.id);
     } catch (err) {
@@ -3332,8 +3332,17 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
               </>
             )}
             <div><Label>Company</Label><SearchableSelect options={filterOptions.companies || []} value={formData.company_id} onChange={(v) => setFormData({...formData, company_id: v})} placeholder="Select..." /></div>
-            <div><Label>Project</Label><SearchableSelect options={filterOptions.projects || []} value={formData.project_id} onChange={(v) => setFormData({...formData, project_id: v})} placeholder="Select..." /></div>
-            <div><Label>Location</Label><SearchableSelect options={filterOptions.locations || []} value={formData.location_id} onChange={(v) => setFormData({...formData, location_id: v})} placeholder="Select..." /></div>
+            {assignmentTarget ? (
+              <>
+                <div><Label>Project</Label><Input value={assignmentTarget.project_name || 'Not assigned'} readOnly disabled title="Inherited from employee" /></div>
+                <div><Label>Location</Label><Input value={assignmentTarget.location_name || 'Not assigned'} readOnly disabled title="Inherited from employee" /></div>
+              </>
+            ) : (
+              <>
+                <div><Label>Project</Label><SearchableSelect options={filterOptions.projects || []} value={formData.project_id} onChange={(v) => setFormData({...formData, project_id: v})} placeholder="Select..." /></div>
+                <div><Label>Location</Label><SearchableSelect options={filterOptions.locations || []} value={formData.location_id} onChange={(v) => setFormData({...formData, location_id: v})} placeholder="Select..." /></div>
+              </>
+            )}
           </div>
           {/* Hardware Specifications — only for hasSpecs categories */}
           {showSpecs && (
@@ -3677,6 +3686,9 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
   if (!asset) return <div className="p-8">Loading...</div>;
 
   const employeeOptions = [{ id: 'company', name: 'Company' }, ...employees.map(e => ({ id: e.id, name: `${e.name} (${e.employee_id})` }))];
+  const selectedAssignEmployee = employees.find(e => e.id === assignData.employee_id);
+  const selectedAssignProject = filterOptions.projects?.find(p => p.id === selectedAssignEmployee?.project_id)?.name || selectedAssignEmployee?.project_name || 'Not assigned';
+  const selectedAssignLocation = filterOptions.locations?.find(l => l.id === selectedAssignEmployee?.location_id)?.name || selectedAssignEmployee?.location_name || 'Not assigned';
   const isExpired = asset.expiry_status === 'Expired';
   const isExpiringOrExpired = asset.asset_type === 'Consumable' && asset.expiry_date;
   const isSubscriptionExpiring = asset.renewal_date && Math.ceil((new Date(asset.renewal_date) - new Date().setHours(0,0,0,0)) / 86400000) <= 7;
@@ -4159,12 +4171,13 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
             <div><Label>Assign To *</Label>
               <SearchableSelect options={employeeOptions} value={assignData.employee_id} onChange={(v) => setAssignData({...assignData, employee_id: v})} placeholder="Select employee..." onCreateNew={() => { setAssignDialogOpen(false); onNavigateToEmployeeCreate(); }} />
             </div>
-            <div><Label>Project</Label>
-              <SearchableSelect options={filterOptions.projects || []} value={assignData.project_id} onChange={(v) => setAssignData({...assignData, project_id: v})} placeholder="Select project..." />
-            </div>
-            <div><Label>Location</Label>
-              <SearchableSelect options={filterOptions.locations || []} value={assignData.location_id} onChange={(v) => setAssignData({...assignData, location_id: v})} placeholder="Select location..." />
-            </div>
+            {assignData.employee_id === 'company' ? <>
+              <div><Label>Project</Label><SearchableSelect options={filterOptions.projects || []} value={assignData.project_id} onChange={(v) => setAssignData({...assignData, project_id: v})} placeholder="Select project..." /></div>
+              <div><Label>Location</Label><SearchableSelect options={filterOptions.locations || []} value={assignData.location_id} onChange={(v) => setAssignData({...assignData, location_id: v})} placeholder="Select location..." /></div>
+            </> : <>
+              <div><Label>Project</Label><Input value={selectedAssignEmployee ? selectedAssignProject : 'Select an employee first'} readOnly disabled /></div>
+              <div><Label>Location</Label><Input value={selectedAssignEmployee ? selectedAssignLocation : 'Select an employee first'} readOnly disabled /></div>
+            </>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>Cancel</Button>
@@ -6508,7 +6521,7 @@ export default function App() {
   const viewAsset = (id) => { setSelectedAssetId(id); setActiveTab('asset-detail'); };
   const startAssetAssignment = (employee) => {
     setAssetsBillsFilter(false);
-    setAssetAssignmentTarget({ id: employee.id, name: employee.name });
+    setAssetAssignmentTarget({ id: employee.id, name: employee.name, project_id: employee.project_id || '', project_name: employee.project_name || '', location_id: employee.location_id || '', location_name: employee.location_name || '' });
     setActiveTab('assets');
   };
   const finishAssetAssignment = (employeeId) => {
