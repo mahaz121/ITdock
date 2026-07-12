@@ -1685,7 +1685,12 @@ export async function POST(request, { params }) {
         const expires = new Date(now.getTime() + 30 * 60 * 1000);
         await db.collection('password_reset_tokens').deleteMany({ user_id: account.id });
         await db.collection('password_reset_tokens').insertOne({ id: uuidv4(), user_id: account.id, token_hash: tokenHash, created_at: now.toISOString(), expires_at: expires.toISOString() });
-        const appOrigin = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(/\/$/, '');
+        const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim();
+        const forwardedProto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
+        const publicHost = forwardedHost || request.headers.get('host');
+        const publicProto = forwardedProto || new URL(request.url).protocol.replace(':', '');
+        const proxyOrigin = publicHost ? `${publicProto}://${publicHost}` : new URL(request.url).origin;
+        const appOrigin = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || proxyOrigin).replace(/\/$/, '');
         const resetUrl = `${appOrigin}/reset-password?token=${encodeURIComponent(token)}`;
         try {
           await sendMail({
