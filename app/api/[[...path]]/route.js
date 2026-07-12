@@ -269,7 +269,7 @@ function writeAllowed(user, route, method) {
   const roles = normalizeRoles(user.roles || user.role);
   if (roles.includes('admin')) return true;
   if (roles.includes('asset_manager')) return !route.startsWith('vacation/') && !route.startsWith('users') && !route.startsWith('settings/');
-  if (roles.includes('it_support')) return route.startsWith('vacation/') || route === 'assignments/bulk-unassign' || (method === 'PUT' && route.startsWith('employees/'));
+  if (roles.includes('it_support')) return route.startsWith('audits') || route.startsWith('vacation/') || route === 'assignments/bulk-unassign' || (method === 'PUT' && route.startsWith('employees/'));
   return route.startsWith('auth/');
 }
 
@@ -317,31 +317,56 @@ const DEFAULT_CHECKLIST = [
   'Accessories present (charger, case, etc.)'
 ];
 
+function addUtcMonths(dateValue, months) {
+  const date = new Date(dateValue);
+  const originalDay = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(originalDay, lastDay));
+  return date;
+}
+
 async function runAuditSchedule(db) {
   try {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const twoMonthsAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+    const settingsDoc = await db.collection('settings').findOne({ key: 'audit_schedule' });
+    const intervalMonths = Math.min(Math.max(parseInt(settingsDoc?.value?.intervalMonths, 10) || 2, 1), 24);
+    const advanceDays = Math.min(Math.max(parseInt(settingsDoc?.value?.advanceDays, 10) || 7, 0), 90);
     const storableCats = await db.collection('categories').find({ category_type: 'STORABLE' }).toArray();
     const catIds = storableCats.map(c => c.id);
     const physicalAssets = await db.collection('assets').find({
       category: { $in: catIds }, archived: { $ne: true }, status: { $nin: ['Scrapped'] }
     }).toArray();
     for (const asset of physicalAssets) {
-      const pending = await db.collection('assetAudits').findOne({ assetId: asset.id, status: { $in: ['scheduled', 'overdue'] } });
-      if (pending) continue;
       const lastAudit = await db.collection('assetAudits').findOne(
         { assetId: asset.id, status: 'completed' },
         { sort: { conductedDate: -1 } }
       );
-      const needsAudit = !lastAudit || (lastAudit.conductedDate || '') < twoMonthsAgo;
-      if (needsAudit) {
+      let dueDate = new Date(today);
+      if (lastAudit?.conductedDate) {
+        dueDate = addUtcMonths(`${lastAudit.conductedDate}T00:00:00.000Z`, intervalMonths);
+      }
+      const scheduleFrom = new Date(dueDate);
+      scheduleFrom.setUTCDate(scheduleFrom.getUTCDate() - advanceDays);
+      const pending = await db.collection('assetAudits').findOne({ assetId: asset.id, status: { $in: ['scheduled', 'overdue'] } });
+      if (pending) {
+        // Remove records created by the previous immediate-scheduling behavior when they
+        // have not entered the configured advance window yet. Manual schedules are preserved.
+        const isLegacyImmediate = !pending.autoScheduled && lastAudit && pending.scheduledDate === asset.next_audit_date;
+        if (isLegacyImmediate && today < scheduleFrom) await db.collection('assetAudits').deleteOne({ id: pending.id });
+        else continue;
+      }
+      if (!lastAudit || today >= scheduleFrom) {
         await db.collection('assetAudits').insertOne({
           id: uuidv4(), assetId: asset.id, employeeId: asset.assigned_to || null,
-          conductedBy: null, scheduledDate: todayStr, conductedDate: null,
+          conductedBy: null, scheduledDate: dueDate.toISOString().split('T')[0], conductedDate: null,
           status: 'scheduled', result: null,
           checklist: DEFAULT_CHECKLIST.map(item => ({ item, status: 'na', notes: '' })),
           overallNotes: '', followUpRequired: false, followUpNotes: '', attachments: [],
-          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+          autoScheduled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
         });
       }
     }
@@ -755,6 +780,9 @@ export async function GET(request, { params }) {
   }
 
   if (route === 'dashboard/stats') {
+    // Lazy scheduler: dashboard loading ensures due audit records are created when
+    // they enter the configured advance window, even before the Audits page is opened.
+    await runAuditSchedule(db);
     const totalAssets = await db.collection('assets').countDocuments({ 
       archived: { $ne: true },
       status: { $ne: 'Scrapped' } 
@@ -1564,9 +1592,15 @@ export async function GET(request, { params }) {
 
   // ============ ASSET AUDITS ============
 
+  // GET /api/settings/audit-schedule — configurable rolling audit cadence
+  if (route === 'settings/audit-schedule') {
+    const doc = await db.collection('settings').findOne({ key: 'audit_schedule' });
+    return json({ intervalMonths: doc?.value?.intervalMonths || 2, advanceDays: doc?.value?.advanceDays ?? 7 });
+  }
+
   // GET /api/audits — list all audits with optional filters
   if (route === 'audits') {
-    if (!['super_admin', 'it_admin', 'it_technician'].includes(user.role)) return error('Forbidden', 403);
+    if (!normalizeRoles(user.roles || user.role).some(r => ['admin', 'asset_manager', 'it_support'].includes(r))) return error('Forbidden', 403);
     await runAuditSchedule(db);
     const status = url.searchParams.get('status') || '';
     const assetId = url.searchParams.get('asset_id') || '';
@@ -1593,7 +1627,7 @@ export async function GET(request, { params }) {
 
   // GET /api/audits/due — list due and overdue audits
   if (route === 'audits/due') {
-    if (!['super_admin', 'it_admin', 'it_technician'].includes(user.role)) return error('Forbidden', 403);
+    if (!normalizeRoles(user.roles || user.role).some(r => ['admin', 'asset_manager', 'it_support'].includes(r))) return error('Forbidden', 403);
     await runAuditSchedule(db);
     const audits = await db.collection('assetAudits').find({ status: { $in: ['scheduled', 'overdue'] } }).sort({ scheduledDate: 1 }).toArray();
     const assets = await db.collection('assets').find({}).toArray();
@@ -3103,7 +3137,7 @@ export async function POST(request, { params }) {
 
   // POST /api/audits — create manual audit
   if (route === 'audits') {
-    if (!['super_admin', 'it_admin', 'it_technician'].includes(user.role)) return error('Forbidden', 403);
+    if (!normalizeRoles(user.roles || user.role).some(r => ['admin', 'asset_manager', 'it_support'].includes(r))) return error('Forbidden', 403);
     const body = await request.json();
     const { asset_id, scheduled_date } = body;
     if (!asset_id) return error('asset_id required');
@@ -3124,21 +3158,24 @@ export async function POST(request, { params }) {
 
   // POST /api/audits/schedule — run rolling schedule manually
   if (route === 'audits/schedule') {
-    if (!['super_admin', 'it_admin'].includes(user.role)) return error('Forbidden', 403);
+    if (!normalizeRoles(user.roles || user.role).some(r => ['admin', 'asset_manager'].includes(r))) return error('Forbidden', 403);
     await runAuditSchedule(db);
     return json({ success: true });
   }
 
   // POST /api/audits/:id/complete — submit checklist results
   if (pathSegments[0] === 'audits' && pathSegments[2] === 'complete' && pathSegments.length === 3) {
-    if (!['super_admin', 'it_admin', 'it_technician'].includes(user.role)) return error('Forbidden', 403);
+    if (!normalizeRoles(user.roles || user.role).some(r => ['admin', 'asset_manager', 'it_support'].includes(r))) return error('Forbidden', 403);
     const auditId = pathSegments[1];
     const body = await request.json();
     const { checklist, overall_notes, follow_up_required, follow_up_notes, result } = body;
     const audit = await db.collection('assetAudits').findOne({ id: auditId });
     if (!audit) return error('Audit not found', 404);
     const todayStr = new Date().toISOString().split('T')[0];
-    const nextAuditDate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const settingsDoc = await db.collection('settings').findOne({ key: 'audit_schedule' });
+    const intervalMonths = Math.min(Math.max(parseInt(settingsDoc?.value?.intervalMonths, 10) || 2, 1), 24);
+    const nextAudit = addUtcMonths(`${todayStr}T00:00:00.000Z`, intervalMonths);
+    const nextAuditDate = nextAudit.toISOString().split('T')[0];
     await db.collection('assetAudits').updateOne({ id: auditId }, { $set: {
       checklist: checklist || audit.checklist,
       overallNotes: overall_notes || '',
@@ -3157,22 +3194,13 @@ export async function POST(request, { params }) {
       next_audit_date: nextAuditDate,
       updated_at: new Date().toISOString()
     }});
-    // Schedule the next audit (2 months from now)
-    await db.collection('assetAudits').insertOne({
-      id: uuidv4(), assetId: audit.assetId, employeeId: audit.employeeId,
-      conductedBy: null, scheduledDate: nextAuditDate, conductedDate: null,
-      status: 'scheduled', result: null,
-      checklist: DEFAULT_CHECKLIST.map(item => ({ item, status: 'na', notes: '' })),
-      overallNotes: '', followUpRequired: false, followUpNotes: '', attachments: [],
-      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
-    });
     await logAudit(db, user.id, 'AUDIT_COMPLETED', 'asset', audit.assetId, { audit_id: auditId, result: result || 'pass' });
     return json({ success: true, next_audit_date: nextAuditDate });
   }
 
   // POST /api/audits/:id/attachments — upload file to audit
   if (pathSegments[0] === 'audits' && pathSegments[2] === 'attachments' && pathSegments.length === 3) {
-    if (!['super_admin', 'it_admin', 'it_technician'].includes(user.role)) return error('Forbidden', 403);
+    if (!normalizeRoles(user.roles || user.role).some(r => ['admin', 'asset_manager', 'it_support'].includes(r))) return error('Forbidden', 403);
     const auditId = pathSegments[1];
     const audit = await db.collection('assetAudits').findOne({ id: auditId });
     if (!audit) return error('Audit not found', 404);
@@ -3629,14 +3657,37 @@ export async function PUT(request, { params }) {
     return json({ success: true });
   }
 
+  // PUT /api/settings/audit-schedule — update rolling audit cadence
+  if (route === 'settings/audit-schedule') {
+    const roles = normalizeRoles(user.roles || user.role);
+    if (!roles.includes('admin')) return error('Forbidden', 403);
+    const body = await request.json();
+    const intervalMonths = parseInt(body.intervalMonths, 10);
+    const advanceDays = parseInt(body.advanceDays, 10);
+    if (!Number.isInteger(intervalMonths) || intervalMonths < 1 || intervalMonths > 24) return error('Audit interval must be between 1 and 24 months');
+    if (!Number.isInteger(advanceDays) || advanceDays < 0 || advanceDays > 90) return error('Advance scheduling must be between 0 and 90 days');
+    const value = { intervalMonths, advanceDays };
+    await db.collection('settings').updateOne({ key: 'audit_schedule' }, { $set: { key: 'audit_schedule', value, updated_at: new Date().toISOString(), updated_by: user.id } }, { upsert: true });
+    await logAudit(db, user.id, 'UPDATE_AUDIT_SCHEDULE_SETTINGS', 'settings', 'audit_schedule', value);
+    return json(value);
+  }
+
   // PUT /api/audits/:id — update audit (status, checklist, notes)
   if (route.startsWith('audits/') && pathSegments.length === 2) {
-    if (!['super_admin', 'it_admin', 'it_technician'].includes(user.role)) return error('Forbidden', 403);
+    if (!normalizeRoles(user.roles || user.role).some(r => ['admin', 'asset_manager', 'it_support'].includes(r))) return error('Forbidden', 403);
     const auditId = pathSegments[1];
     const body = await request.json();
     const audit = await db.collection('assetAudits').findOne({ id: auditId });
     if (!audit) return error('Audit not found', 404);
     const updates = { updatedAt: new Date().toISOString() };
+    if (body.scheduledDate !== undefined) {
+      const roles = normalizeRoles(user.roles || user.role);
+      if (!roles.includes('admin') && !roles.includes('it_support')) return error('Only Super Admin and IT Technicians can reschedule audits', 403);
+      if (!['scheduled', 'overdue'].includes(audit.status)) return error('Only pending audits can be rescheduled');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(body.scheduledDate)) return error('A valid scheduled date is required');
+      updates.scheduledDate = body.scheduledDate;
+      updates.status = body.scheduledDate < new Date().toISOString().split('T')[0] ? 'overdue' : 'scheduled';
+    }
     if (body.status) updates.status = body.status;
     if (body.checklist) updates.checklist = body.checklist;
     if (body.overallNotes !== undefined) updates.overallNotes = body.overallNotes;

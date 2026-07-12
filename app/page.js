@@ -4504,13 +4504,33 @@ function MasterDataPage({ user }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formData, setFormData] = useState({});
   const [editing, setEditing] = useState(null);
+  const [auditSettings, setAuditSettings] = useState({ intervalMonths: 2, advanceDays: 7 });
+  const [savingAuditSettings, setSavingAuditSettings] = useState(false);
   const confirm = useConfirm();
+  const canManageAuditSettings = user.role === 'super_admin' || (user.roles || []).includes('admin');
 
   useEffect(() => { loadData(); }, [activeTab]);
 
   const loadData = async () => {
-    try { const d = await api.get(activeTab); setData(d || []); }
+    try {
+      if (activeTab === 'audit-schedule') {
+        const d = await api.get('settings/audit-schedule');
+        setAuditSettings(d || { intervalMonths: 2, advanceDays: 7 });
+        return;
+      }
+      const d = await api.get(activeTab); setData(d || []);
+    }
     catch (err) { toast.error('Failed to load data'); setData([]); }
+  };
+
+  const saveAuditSettings = async () => {
+    setSavingAuditSettings(true);
+    try {
+      const saved = await api.put('settings/audit-schedule', auditSettings);
+      setAuditSettings(saved);
+      toast.success('Audit schedule settings updated');
+    } catch (err) { toast.error(err.message); }
+    finally { setSavingAuditSettings(false); }
   };
 
   const openDialog = (item = null) => {
@@ -4550,6 +4570,7 @@ function MasterDataPage({ user }) {
     { id: 'locations', label: 'Locations', icon: MapPin },
     { id: 'departments', label: 'Departments', icon: Users },
     { id: 'categories', label: 'Categories', icon: FolderOpen },
+    { id: 'audit-schedule', label: 'Audit Schedule', icon: Clock },
   ];
 
   return (
@@ -4560,7 +4581,7 @@ function MasterDataPage({ user }) {
         <TabsList>{masterTabs.map(t => <TabsTrigger key={t.id} value={t.id}><t.icon className="h-4 w-4 mr-2" />{t.label}</TabsTrigger>)}</TabsList>
 
         {/* Standard tabs: Companies, Projects, Locations, Departments */}
-        {masterTabs.filter(t => t.id !== 'categories').map(t => (
+        {masterTabs.filter(t => !['categories', 'audit-schedule'].includes(t.id)).map(t => (
           <TabsContent key={t.id} value={t.id}>
             <div className="flex justify-end mb-4">
               <Button onClick={() => openDialog()} className="bg-[#0d9488]"><Plus className="h-4 w-4 mr-2" />Add {t.label.slice(0, -1)}</Button>
@@ -4622,6 +4643,32 @@ function MasterDataPage({ user }) {
                 ))}
               </TableBody>
             </Table>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="audit-schedule">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Automatic Audit Schedule</CardTitle>
+              <CardDescription>Controls when the next physical asset audit becomes due and how early it appears in the audit queue.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label>Audit interval (months)</Label>
+                  <Input type="number" min="1" max="24" disabled={!canManageAuditSettings} value={auditSettings.intervalMonths} onChange={e => setAuditSettings({...auditSettings, intervalMonths:Number(e.target.value)})} />
+                  <p className="text-xs mt-1" style={{color:'rgba(234,229,236,0.45)'}}>Example: 2 schedules each asset two months after its completed audit.</p>
+                </div>
+                <div>
+                  <Label>Schedule in advance (days)</Label>
+                  <Input type="number" min="0" max="90" disabled={!canManageAuditSettings} value={auditSettings.advanceDays} onChange={e => setAuditSettings({...auditSettings, advanceDays:Number(e.target.value)})} />
+                  <p className="text-xs mt-1" style={{color:'rgba(234,229,236,0.45)'}}>The audit record appears this many days before its due date.</p>
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button onClick={saveAuditSettings} disabled={savingAuditSettings || !canManageAuditSettings} className="bg-[#0d9488]">{savingAuditSettings ? 'Saving…' : 'Save Audit Schedule'}</Button>
+              </div>
+            </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
@@ -5611,6 +5658,13 @@ function AuditsPage({ user }) {
   const [manualAssets, setManualAssets] = useState([]);
   const [manualAssetId, setManualAssetId] = useState('');
   const [manualDate, setManualDate] = useState(new Date().toISOString().split('T')[0]);
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleAudit, setRescheduleAudit] = useState(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [auditCadence, setAuditCadence] = useState({ intervalMonths: 2, advanceDays: 7 });
+
+  const normalizedRoles = user.roles || [];
+  const canReschedule = user.role === 'super_admin' || normalizedRoles.includes('admin') || normalizedRoles.includes('it_support');
 
   useEffect(() => { loadData(); }, [filterStatus]);
 
@@ -5619,8 +5673,9 @@ function AuditsPage({ user }) {
     try {
       const params = new URLSearchParams();
       if (filterStatus) params.set('status', filterStatus);
-      const data = await api.get(`audits?${params.toString()}`);
+      const [data, cadence] = await Promise.all([api.get(`audits?${params.toString()}`), api.get('settings/audit-schedule').catch(() => auditCadence)]);
       setAudits(data || []);
+      setAuditCadence(cadence || auditCadence);
     } catch { toast.error('Failed to load audits'); }
     setLoading(false);
   };
@@ -5670,6 +5725,22 @@ function AuditsPage({ user }) {
     setManualDialogOpen(true);
   };
 
+  const openReschedule = (audit) => {
+    setRescheduleAudit(audit);
+    setRescheduleDate(audit.scheduledDate || '');
+    setRescheduleOpen(true);
+  };
+
+  const saveReschedule = async () => {
+    if (!rescheduleAudit || !rescheduleDate) return;
+    try {
+      await api.put(`audits/${rescheduleAudit.id}`, { scheduledDate: rescheduleDate });
+      toast.success('Audit date updated');
+      setRescheduleOpen(false);
+      loadData();
+    } catch (err) { toast.error(err.message); }
+  };
+
   const scheduleManualAudit = async () => {
     if (!manualAssetId) return toast.error('Select an asset');
     try {
@@ -5697,7 +5768,7 @@ function AuditsPage({ user }) {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold" style={{color:'#eae5ec'}}>Asset Audits</h1>
-          <p className="text-sm mt-0.5" style={{color:'rgba(234,229,236,0.5)'}}>Rolling 2-month audit checklist for all physical assets</p>
+          <p className="text-sm mt-0.5" style={{color:'rgba(234,229,236,0.5)'}}>Every {auditCadence.intervalMonths} month{auditCadence.intervalMonths === 1 ? '' : 's'} · appears {auditCadence.advanceDays} day{auditCadence.advanceDays === 1 ? '' : 's'} before due</p>
         </div>
         <Button onClick={openManualDialog} style={{background:'#0d9488', color:'#fff'}}><Plus className="h-4 w-4 mr-2" />Schedule Manual Audit</Button>
       </div>
@@ -5739,6 +5810,9 @@ function AuditsPage({ user }) {
                   <TableCell>{resultBadge(audit.result)}</TableCell>
                   <TableCell style={{color:'rgba(234,229,236,0.6)'}}>{audit.conducted_by_name || '—'}</TableCell>
                   <TableCell>
+                    {canReschedule && ['scheduled', 'overdue'].includes(audit.status) && (
+                      <Button size="sm" variant="ghost" className="text-xs h-7 mr-1" onClick={() => openReschedule(audit)} title="Edit audit date"><Calendar className="h-3.5 w-3.5 mr-1" />Date</Button>
+                    )}
                     {['scheduled', 'overdue'].includes(audit.status) && (
                       <Button size="sm" className="bg-[#0d9488] text-white text-xs h-7" onClick={() => openConduct(audit)}>Conduct Audit</Button>
                     )}
@@ -5752,6 +5826,17 @@ function AuditsPage({ user }) {
           </TableBody>
         </Table>
       </Card>
+
+      <Dialog open={rescheduleOpen} onOpenChange={setRescheduleOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Edit Audit Date</DialogTitle><DialogDescription>{rescheduleAudit?.asset_tag}</DialogDescription></DialogHeader>
+          <div><Label>Due Date</Label><Input type="date" value={rescheduleDate} onChange={e => setRescheduleDate(e.target.value)} /></div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRescheduleOpen(false)}>Cancel</Button>
+            <Button className="bg-[#0d9488]" onClick={saveReschedule} disabled={!rescheduleDate}>Save Date</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Conduct Audit Modal */}
       <Dialog open={conductOpen} onOpenChange={setConductOpen}>
