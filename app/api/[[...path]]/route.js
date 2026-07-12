@@ -3668,8 +3668,15 @@ export async function PUT(request, { params }) {
     }
     
     const updateData = { ...body, updated_at: new Date().toISOString() };
+    delete updateData._id;
     delete updateData.id;
     delete updateData.created_at;
+    delete updateData.asset_count;
+    delete updateData.company_name;
+    delete updateData.project_name;
+    delete updateData.location_name;
+    delete updateData.department_name;
+    delete updateData.manager_name;
     delete updateData.vacation_action;
     delete updateData.handover_employee_id;
     delete updateData.assigned_assets;

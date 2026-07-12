@@ -1876,7 +1876,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
       'Name': e.name || '',
       'Employee ID': e.employee_id || '',
       'Position': e.position || '',
-      'Email': e.company_email || '',
+      'Work Email': e.company_email || '',
       'Phone': e.phone || '',
       'Department': e.department_name || '',
       'Location': e.location_name || '',
@@ -1975,8 +1975,9 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
                             <Input className="h-8 text-sm" value={inlineEditData.position || ''} onChange={e => setInlineEditData({...inlineEditData, position: e.target.value})} placeholder="Job title..." />
                           </div>
                           <div>
-                            <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Email</label>
+                            <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Work Email</label>
                             <Input className="h-8 text-sm" type="email" value={inlineEditData.company_email || ''} onChange={e => setInlineEditData({...inlineEditData, company_email: e.target.value})} placeholder="email@company.com" />
+                            <p className="text-[10px] mt-1 leading-snug" style={{color:'rgba(234,229,236,0.4)'}}>Only fill this in if the employee has a company-provided email address.</p>
                           </div>
                           <div>
                             <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Phone</label>
@@ -2048,7 +2049,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
                 </SelectContent>
               </Select>
             </div>
-            <div><Label>Company Email</Label><Input value={formData.company_email || ''} onChange={(e) => setFormData({...formData, company_email: e.target.value})} /></div>
+            <div><Label>Work Email</Label><Input type="email" value={formData.company_email || ''} onChange={(e) => setFormData({...formData, company_email: e.target.value})} placeholder="name@company.com" /><p className="text-xs mt-1.5" style={{color:'rgba(234,229,236,0.4)'}}>Optional — only enter an address provided by the employee’s company.</p></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
@@ -5183,7 +5184,7 @@ function CompanyEmailsPage({ user }) {
       <div className="relative mb-4"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{color:'rgba(234,229,236,0.4)'}} /><Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search email or employee..." className="pl-9 max-w-md" /></div>
       <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(key,value)=>setFilters({...filters,[key]:value})} onClear={()=>setFilters({})} />
       <Card><Table>
-        <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Full Name</TableHead><TableHead>Company</TableHead><TableHead>Project</TableHead><TableHead>Department</TableHead><TableHead>Location</TableHead>{canEdit&&<TableHead>Actions</TableHead>}</TableRow></TableHeader>
+        <TableHeader><TableRow><TableHead>Work Email</TableHead><TableHead>Full Name</TableHead><TableHead>Company</TableHead><TableHead>Project</TableHead><TableHead>Department</TableHead><TableHead>Location</TableHead>{canEdit&&<TableHead>Actions</TableHead>}</TableRow></TableHeader>
         <TableBody>{loading ? <TableRow><TableCell colSpan={canEdit?7:6} className="text-center py-10">Loading...</TableCell></TableRow> : filtered.length===0 ? <TableRow><TableCell colSpan={canEdit?7:6} className="text-center py-10" style={{color:'rgba(234,229,236,0.4)'}}>No company emails found</TableCell></TableRow> : filtered.map(entry=><TableRow key={entry.employee_id}>
           <TableCell><a href={`mailto:${entry.email}`} style={{color:'#5eead4'}}>{entry.email}</a></TableCell><TableCell className="font-medium">{entry.fullName}</TableCell><TableCell>{entry.company||'—'}</TableCell><TableCell>{entry.project||'—'}</TableCell><TableCell>{entry.department||'—'}</TableCell><TableCell>{entry.location||'—'}</TableCell>
           {canEdit&&<TableCell><Button size="sm" variant="ghost" onClick={()=>openEdit(entry)}><Pencil className="h-4 w-4" /></Button><Button size="sm" variant="ghost" onClick={()=>remove(entry)}><Trash2 className="h-4 w-4 text-red-500" /></Button></TableCell>}
@@ -5191,7 +5192,7 @@ function CompanyEmailsPage({ user }) {
       </Table></Card>
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{editing?'Edit':'Add'} Company Email</DialogTitle><DialogDescription>Profile details are inherited from the selected employee.</DialogDescription></DialogHeader><div className="space-y-4">
         <div><Label>Employee *</Label><SearchableSelect options={availableEmployees.map(e=>({id:e.id,name:`${e.name} (${e.employee_id})`}))} value={form.employee_id} onChange={value=>setForm({...form,employee_id:value})} placeholder="Select employee..." disabled={!!editing} /></div>
-        <div><Label>Company Email *</Label><Input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="name@company.com" /></div>
+        <div><Label>Work Email *</Label><Input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="name@company.com" /><p className="text-xs mt-1.5" style={{color:'rgba(234,229,236,0.4)'}}>Only use an email address provided by the employee’s company.</p></div>
       </div><DialogFooter><Button variant="outline" onClick={()=>setDialogOpen(false)}>Cancel</Button><Button onClick={save} disabled={saving} className="bg-[#0d9488]">{saving?'Saving…':editing?'Save Changes':'Assign Email'}</Button></DialogFooter></DialogContent></Dialog>
     </div>
   );
