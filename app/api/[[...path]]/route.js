@@ -465,8 +465,8 @@ async function generateAssetTag(db, category) {
   }
 }
 
-// Seed default admin and master data
-async function seedAdmin(db) {
+// Seed default admin and master data once per server process.
+async function initializeDatabase(db) {
   // Only create default admin if NO users exist at all (fresh install)
   const userCount = await db.collection('users').countDocuments();
   if (userCount === 0) {
@@ -522,6 +522,17 @@ async function seedAdmin(db) {
   const attemptsCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   db.collection('login_attempts').deleteMany({ last_attempt: { $lt: attemptsCutoff }, locked_until: null }).catch(() => {});
   await ensureUniqueIndexes(db);
+}
+
+let databaseInitializationPromise = null;
+async function seedAdmin(db) {
+  if (!databaseInitializationPromise) {
+    databaseInitializationPromise = initializeDatabase(db).catch(error => {
+      databaseInitializationPromise = null;
+      throw error;
+    });
+  }
+  await databaseInitializationPromise;
 }
 
 export async function OPTIONS() {
@@ -1151,6 +1162,7 @@ export async function GET(request, { params }) {
   if (route === 'employees') {
     const filter = {};
     const paginated = url.searchParams.get('paginated') === 'true';
+    const lightweight = url.searchParams.get('lightweight') === 'true';
     const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
     const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
     const company_id = url.searchParams.get('company_id');
@@ -1181,12 +1193,20 @@ export async function GET(request, { params }) {
       ];
     }
     
-    const employeeQuery = db.collection('employees').find(filter).sort({ name: 1 });
+    const employeeProjection = lightweight
+      ? { id: 1, name: 1, employee_id: 1, status: 1, company_id: 1, project_id: 1, location_id: 1, department_id: 1 }
+      : undefined;
+    const employeeQuery = db.collection('employees').find(filter, employeeProjection ? { projection: employeeProjection } : {}).sort({ name: 1 });
     if (paginated) employeeQuery.skip((page - 1) * pageSize).limit(pageSize);
     const [employees, total] = await Promise.all([
       employeeQuery.toArray(),
       paginated ? db.collection('employees').countDocuments(filter) : Promise.resolve(null),
     ]);
+
+    if (lightweight) {
+      if (paginated) return json({ items: employees, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
+      return json(employees);
+    }
     
     // Get asset count for each employee
     const employeeIds = employees.map(e => e.id);

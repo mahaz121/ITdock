@@ -40,6 +40,8 @@ function downloadXlsx(rows, sheetName, fileName) {
   XLSX.writeFile(wb, fileName);
 }
 
+let apiRequestSequence = 0;
+
 // API helper
 const api = {
   token: null,
@@ -85,6 +87,13 @@ const api = {
     if (sessionId) headers['X-Session-Id'] = sessionId;
     const options = { method, headers };
     if (data) options.body = isFormData ? data : JSON.stringify(data);
+    const shouldTrack = typeof window !== 'undefined' && method === 'GET' && !path.startsWith('dashboard/notifications');
+    const requestId = shouldTrack ? ++apiRequestSequence : null;
+    if (shouldTrack) {
+      window.__itdockActiveRequests = (window.__itdockActiveRequests || 0) + 1;
+      window.dispatchEvent(new CustomEvent('itdock:request-change', { detail: { requestId, active: window.__itdockActiveRequests } }));
+    }
+    try {
     const res = await fetch(`/api/${path}`, options);
     if (res.status === 401) {
       const hadToken = !!this.token;
@@ -98,6 +107,12 @@ const api = {
     const contentType = res.headers.get('content-type');
     if (contentType?.includes('text/csv')) return res.blob();
     return res.json();
+    } finally {
+      if (shouldTrack) {
+        window.__itdockActiveRequests = Math.max(0, (window.__itdockActiveRequests || 1) - 1);
+        window.dispatchEvent(new CustomEvent('itdock:request-change', { detail: { requestId, active: window.__itdockActiveRequests } }));
+      }
+    }
   },
   get: (path) => api.request('GET', path),
   post: (path, data) => api.request('POST', path, data),
@@ -1767,9 +1782,9 @@ function Dashboard({ onNavigate, onNavigateToBills }) {
 
 const EMPLOYEE_PAGE_SIZE = 40;
 
-function ITdockPageLoader({ label = 'Loading employees' }) {
+function ITdockPageLoader({ label = 'Loading employees', fullScreen = false }) {
   return (
-    <div className="min-h-[360px] flex items-center justify-center overflow-hidden relative rounded-xl" style={{background:'#050810'}}>
+    <div className={`${fullScreen ? 'min-h-screen' : 'min-h-[360px] rounded-xl'} flex items-center justify-center overflow-hidden relative`} style={{background:'#050810'}}>
       <style>{`
         @keyframes pageLoaderOrbit { to { transform: rotate(360deg); } }
         @keyframes pageLoaderPulse { 0%,100% { transform:scale(.96); opacity:.72; } 50% { transform:scale(1.04); opacity:1; } }
@@ -1794,6 +1809,33 @@ function ITdockPageLoader({ label = 'Loading employees' }) {
       </div>
     </div>
   );
+}
+
+function GlobalRequestLoader() {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    let showTimer = null;
+    const update = (event) => {
+      const active = event?.detail?.active ?? window.__itdockActiveRequests ?? 0;
+      if (active > 0) {
+        if (!showTimer) showTimer = setTimeout(() => setVisible(true), 180);
+      } else {
+        if (showTimer) clearTimeout(showTimer);
+        showTimer = null;
+        setVisible(false);
+      }
+    };
+    window.addEventListener('itdock:request-change', update);
+    update();
+    return () => {
+      window.removeEventListener('itdock:request-change', update);
+      if (showTimer) clearTimeout(showTimer);
+    };
+  }, []);
+
+  if (!visible) return null;
+  return <div className="fixed inset-0 z-[100]"><ITdockPageLoader label="Loading ITdock" fullScreen /></div>;
 }
 
 // Employees List
@@ -2487,7 +2529,7 @@ function EmployeeDetail({ employeeId, user, onBack, onViewAsset }) {
     try {
       const [empData, empsData] = await Promise.all([
         api.get(`employees/${employeeId}`),
-        api.get('employees?status=Active')
+        api.get('employees?status=Active&lightweight=true')
       ]);
       setEmployee(empData);
       setEmployees(empsData);
@@ -3658,7 +3700,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
     try {
       const [assetData, emps, opts, maintenance, docs, audits, addonData] = await Promise.all([
         api.get(`assets/${assetId}`),
-        api.get('employees?status=Active').catch(() => []),
+        api.get('employees?status=Active&lightweight=true').catch(() => []),
         api.get('filters').catch(() => ({})),
         api.get('maintenance').catch(() => []),
         api.get(`assets/${assetId}/documents`).catch(() => []),
@@ -4596,7 +4638,7 @@ function AssignmentsPage({ user, onViewAsset }) {
         api.get(`assignments?${params.toString()}`),
         api.get('assets/unassigned'),
         api.get('filters'),
-        api.get('employees?status=Active')
+        api.get('employees?status=Active&lightweight=true')
       ]);
       setAssignments(assignData);
       setUnassignedAssets(unassignedData);
@@ -4944,7 +4986,7 @@ function MaintenancePage({ user }) {
       const [recs, ass, emps] = await Promise.all([
         api.get('maintenance'), 
         api.get('assets'),
-        api.get('employees?status=Active')
+        api.get('employees?status=Active&lightweight=true')
       ]);
       setRecords(recs);
       setAssets(ass);
@@ -5325,7 +5367,7 @@ function CompanyEmailsPage({ user }) {
     setLoading(true);
     try {
       const [emailData, employeeData, options] = await Promise.all([
-        api.get('company-emails'), api.get('employees?status=Active'), api.get('filters')
+        api.get('company-emails'), api.get('employees?status=Active&lightweight=true'), api.get('filters')
       ]);
       setEntries(emailData || []);
       setEmployees(employeeData || []);
@@ -5425,7 +5467,7 @@ function ExtensionsPage({ user }) {
         api.get('departments').catch(() => []),
         api.get('locations').catch(() => []),
         api.get('companies').catch(() => []),
-        api.get('employees').catch(() => []),
+        api.get('employees?lightweight=true').catch(() => []),
         api.get('assets').catch(() => []),
       ]);
       setExtensions(Array.isArray(exts) ? exts : []);
@@ -6940,6 +6982,7 @@ export default function App() {
   return (
     <ConfirmProvider>
     <div className="flex h-screen overflow-hidden" style={{background: '#0a0e17', color:'#eae5ec'}}>
+      <GlobalRequestLoader />
       <IdleTimeoutWatcher onLogout={handleLogout} />
       {user.is_default_password && <ForcePasswordChangeModal onPasswordChanged={() => setUser({...user, is_default_password: false})} />}
       <Sidebar activeTab={activeTab} setActiveTab={navigateToTab} user={user} onLogout={handleLogout} />
