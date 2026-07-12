@@ -2584,7 +2584,7 @@ function EmployeeDetail({ employeeId, user, onBack, onViewAsset }) {
     } catch (err) { toast.error(err.message); }
   };
 
-  if (!employee) return <div className="p-8">Loading...</div>;
+  if (!employee) return <div className="p-8"><ITdockPageLoader label="Loading employee" /></div>;
 
   const isOnVacation = employee.status === 'On Vacation';
   const isActive = employee.status === 'Active';
@@ -2915,7 +2915,7 @@ function PendingApprovalsPage({ user, onViewAsset, onViewEmployee }) {
     return {};
   };
 
-  if (loading) return <div className="p-8 text-center" style={{color:'rgba(234,229,236,0.4)'}}>Loading...</div>;
+  if (loading) return <div className="p-8"><ITdockPageLoader label="Loading approvals" /></div>;
 
   return (
     <div className="p-8">
@@ -3114,11 +3114,17 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
   const [assetInlineEditId, setAssetInlineEditId] = useState(null);
   const [assetInlineEditData, setAssetInlineEditData] = useState({});
   const [assigningAssetId, setAssigningAssetId] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalAssets, setTotalAssets] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [assetsLoading, setAssetsLoading] = useState(true);
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
 
   const canEdit = ['super_admin', 'it_admin'].includes(user.role);
 
-  useEffect(() => { loadCategories(); }, []);
-  useEffect(() => { loadData(); }, [filters, searchTerm, showArchived, billsFilter]);
+  useEffect(() => { loadCategories(); loadFilterOptions(); }, []);
+  useEffect(() => { const timer = setTimeout(() => setDebouncedSearchTerm(searchTerm), 300); return () => clearTimeout(timer); }, [searchTerm]);
+  useEffect(() => { loadData(); }, [filters, debouncedSearchTerm, showArchived, showIoTOnly, billsFilter, currentPage]);
 
   const loadCategories = async () => {
     try {
@@ -3127,28 +3133,31 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
     } catch (err) { console.error('Failed to load categories'); }
   };
 
+  const loadFilterOptions = async () => {
+    try { setFilterOptions(await api.get('filters')); }
+    catch (err) { console.error('Failed to load asset filters', err); }
+  };
+
   const loadData = async () => {
+    setAssetsLoading(true);
     try {
       const params = new URLSearchParams();
       Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
-      if (searchTerm) params.set('search', searchTerm);
+      if (debouncedSearchTerm) params.set('search', debouncedSearchTerm);
       if (showArchived) params.set('archived', 'true');
+      if (showIoTOnly) params.set('iot_only', 'true');
       if (billsFilter) params.set('category_type', 'SUBSCRIPTION');
-      const [assetsData, opts] = await Promise.all([
-        api.get(`assets?${params.toString()}`),
-        api.get('filters')
-      ]);
-      let filtered = assetsData;
       if (billsFilter) {
         const sevenDaysOut = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
-        const today = new Date().toISOString().split('T')[0];
-        filtered = assetsData
-          .filter(a => a.renewal_date && a.renewal_date <= sevenDaysOut)
-          .sort((a, b) => (a.renewal_date > b.renewal_date ? 1 : -1));
+        params.set('renewal_before', sevenDaysOut);
       }
-      setAssets(filtered);
-      setFilterOptions(opts);
+      params.set('paginated', 'true'); params.set('page', String(currentPage)); params.set('page_size', '40');
+      const result = await api.get(`assets?${params.toString()}`);
+      setAssets(result.items || []);
+      setTotalAssets(result.total || 0);
+      setTotalPages(result.total_pages || 1);
     } catch (err) { toast.error('Failed to load assets'); }
+    finally { setAssetsLoading(false); }
   };
 
   const openDialog = () => {
@@ -3242,8 +3251,16 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
   // IoT/Network specs — shown when category isIoT is true
   const showIoTSpecs = !!(selectedAddCategory?.isIoT);
 
-  const exportAssets = () => {
-    const rows = assets.map(a => ({
+  const exportAssets = async () => {
+    try {
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key,value]) => { if (value) params.set(key,value); });
+      if (debouncedSearchTerm) params.set('search',debouncedSearchTerm);
+      if (showArchived) params.set('archived','true');
+      if (showIoTOnly) params.set('iot_only','true');
+      if (billsFilter) { params.set('category_type','SUBSCRIPTION'); params.set('renewal_before',new Date(Date.now()+7*86400000).toISOString().split('T')[0]); }
+      const exportData = await api.get(`assets?${params.toString()}`);
+      const rows = exportData.map(a => ({
       'Asset Tag': a.asset_tag || '',
       'Category': a.category_name || '',
       'Type': a.category_type || '',
@@ -3264,17 +3281,20 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
       'GPU': a.specs?.gpu || '',
       'OS': a.specs?.os || '',
       'Notes': a.notes || '',
-    }));
-    downloadXlsx(rows, 'Assets', `mahaz_assets_${new Date().toISOString().slice(0,10)}.xlsx`);
-    toast.success('Excel file downloaded');
+      }));
+      downloadXlsx(rows, 'Assets', `mahaz_assets_${new Date().toISOString().slice(0,10)}.xlsx`);
+      toast.success('Excel file downloaded');
+    } catch (err) { toast.error(err.message); }
   };
+
+  if (assetsLoading) return <div className="p-8"><ITdockPageLoader label="Loading assets" /></div>;
 
   return (
     <div className="p-8">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-white">Assets</h1>
         <div className="flex items-center space-x-3">
-          <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#AEAEB2]" /><Input placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 w-64" /></div>
+          <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#AEAEB2]" /><Input placeholder="Search..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} className="pl-10 w-64" /></div>
           <Button onClick={exportAssets} variant="outline" size="sm"><Download className="h-4 w-4 mr-2" />Export</Button>
           {canEdit && <Button onClick={openDialog} className="bg-[#0d9488] hover:bg-[#0062CC]"><Plus className="h-4 w-4 mr-2" />{assignmentTarget ? 'Add & Assign Asset' : 'Add Asset'}</Button>}
         </div>
@@ -3305,7 +3325,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
       {/* Enhanced Filters */}
       <div className="mb-4 p-4 rounded-lg" style={{background:'#0a0e17', border:'1px solid rgba(255,255,255,0.08)'}}>
         <div className="flex flex-wrap gap-3 items-center">
-          <Select value={filters.category || 'all'} onValueChange={(v) => setFilters({...filters, category: v === 'all' ? '' : v})}>
+          <Select value={filters.category || 'all'} onValueChange={(v) => { setFilters({...filters, category: v === 'all' ? '' : v}); setCurrentPage(1); }}>
             <SelectTrigger className="w-48"><SelectValue placeholder="Filter by Category" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Categories</SelectItem>
@@ -3313,7 +3333,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
             </SelectContent>
           </Select>
           
-          <Select value={filters.category_type || 'all'} onValueChange={(v) => setFilters({...filters, category_type: v === 'all' ? '' : v})}>
+          <Select value={filters.category_type || 'all'} onValueChange={(v) => { setFilters({...filters, category_type: v === 'all' ? '' : v}); setCurrentPage(1); }}>
             <SelectTrigger className="w-48"><SelectValue placeholder="Filter by Type" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Types</SelectItem>
@@ -3324,22 +3344,22 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
           </Select>
           
           <div className="flex items-center space-x-2">
-            <Checkbox id="archived" checked={showArchived} onCheckedChange={setShowArchived} />
+            <Checkbox id="archived" checked={showArchived} onCheckedChange={(checked) => { setShowArchived(checked); setCurrentPage(1); }} />
             <label htmlFor="archived" className="text-sm text-[#1D1D1F] cursor-pointer">Show Archived</label>
           </div>
 
-          <button onClick={() => setShowIoTOnly(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+          <button onClick={() => { setShowIoTOnly(v => !v); setCurrentPage(1); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
             style={{background: showIoTOnly ? 'rgba(94,234,212,0.18)' : 'rgba(255,255,255,0.05)', color: showIoTOnly ? '#5eead4' : 'rgba(234,229,236,0.5)', border: `1px solid ${showIoTOnly ? 'rgba(94,234,212,0.4)' : 'rgba(255,255,255,0.1)'}` }}>
             <Wifi className="h-3.5 w-3.5" />Network/IoT
           </button>
 
           {(filters.category || filters.category_type || showArchived || showIoTOnly) && (
-            <Button variant="outline" size="sm" onClick={() => { setFilters({}); setShowArchived(false); setShowIoTOnly(false); }}><X className="h-4 w-4 mr-1" />Clear Filters</Button>
+            <Button variant="outline" size="sm" onClick={() => { setFilters({}); setShowArchived(false); setShowIoTOnly(false); setCurrentPage(1); }}><X className="h-4 w-4 mr-1" />Clear Filters</Button>
           )}
         </div>
       </div>
 
-      <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(k, v) => setFilters({...filters, [k]: v})} onClear={() => setFilters({})} />
+      <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(k, v) => { setFilters({...filters, [k]: v}); setCurrentPage(1); }} onClear={() => { setFilters({}); setCurrentPage(1); }} />
 
       <Card>
         <Table>
@@ -3358,7 +3378,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(showIoTOnly ? assets.filter(a => a.isIoT) : assets).map((a, index) => (
+            {assets.map((a, index) => (
               <React.Fragment key={a.id}>
                 <TableRow className="cursor-pointer" onClick={() => assetInlineEditId !== a.id && onViewAsset(a.id)}>
                   <TableCell className="text-[#6E6E73]">{index + 1}</TableCell>
@@ -3510,6 +3530,15 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
           </TableBody>
         </Table>
       </Card>
+
+      <div className="flex items-center justify-between mt-4">
+        <p className="text-sm" style={{color:'rgba(234,229,236,0.55)'}}>{totalAssets === 0 ? 'No assets' : `Showing ${(currentPage - 1) * 40 + 1}-${Math.min(currentPage * 40, totalAssets)} of ${totalAssets}`}</p>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}><ChevronLeft className="h-4 w-4 mr-1" />Previous</Button>
+          <span className="text-sm px-2">Page {currentPage} of {totalPages}</span>
+          <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
+        </div>
+      </div>
 
       {/* Create Asset Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -3702,7 +3731,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
         api.get(`assets/${assetId}`),
         api.get('employees?status=Active&lightweight=true').catch(() => []),
         api.get('filters').catch(() => ({})),
-        api.get('maintenance').catch(() => []),
+        api.get(`maintenance?asset_id=${encodeURIComponent(assetId)}`).catch(() => []),
         api.get(`assets/${assetId}/documents`).catch(() => []),
         api.get(`assets/${assetId}/audits`).catch(() => []),
         api.get(`assets/${assetId}/addons`).catch(() => [])
@@ -3904,7 +3933,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
     } catch (err) { toast.error(err.message); }
   };
 
-  if (!asset) return <div className="p-8">Loading...</div>;
+  if (!asset) return <div className="p-8"><ITdockPageLoader label="Loading asset" /></div>;
 
   const employeeOptions = [{ id: 'company', name: 'Company' }, ...employees.map(e => ({ id: e.id, name: `${e.name} (${e.employee_id})` }))];
   const selectedAssignEmployee = employees.find(e => e.id === assignData.employee_id);
@@ -4625,26 +4654,45 @@ function AssignmentsPage({ user, onViewAsset }) {
   const [quickAssignOpen, setQuickAssignOpen] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [assignTo, setAssignTo] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalAssignments, setTotalAssignments] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [unassignedPage, setUnassignedPage] = useState(1);
+  const [unassignedTotal, setUnassignedTotal] = useState(0);
+  const [unassignedPages, setUnassignedPages] = useState(1);
 
   const canAssign = ['super_admin', 'it_admin', 'it_technician'].includes(user.role);
 
-  useEffect(() => { loadData(); }, [filters]);
+  useEffect(() => { loadReferenceData(); }, [unassignedPage]);
+  useEffect(() => { loadAssignments(); }, [filters, currentPage]);
 
-  const loadData = async () => {
+  const loadReferenceData = async () => {
     try {
-      const params = new URLSearchParams({ active_only: 'true' });
-      Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
-      const [assignData, unassignedData, opts, emps] = await Promise.all([
-        api.get(`assignments?${params.toString()}`),
-        api.get('assets/unassigned'),
+      const [unassignedData, opts, emps] = await Promise.all([
+        api.get(`assets/unassigned?paginated=true&page=${unassignedPage}&page_size=40`),
         api.get('filters'),
         api.get('employees?status=Active&lightweight=true')
       ]);
-      setAssignments(assignData);
-      setUnassignedAssets(unassignedData);
+      setUnassignedAssets(unassignedData.items || []);
+      setUnassignedTotal(unassignedData.total || 0);
+      setUnassignedPages(unassignedData.total_pages || 1);
       setFilterOptions(opts);
       setEmployees(emps);
     } catch (err) { toast.error('Failed to load data'); }
+  };
+
+  const loadAssignments = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ active_only: 'true', paginated: 'true', page: String(currentPage), page_size: '40' });
+      Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+      const result = await api.get(`assignments?${params.toString()}`);
+      setAssignments(result.items || []);
+      setTotalAssignments(result.total || 0);
+      setTotalPages(result.total_pages || 1);
+    } catch (err) { toast.error('Failed to load assignments'); }
+    finally { setLoading(false); }
   };
 
   const handleQuickAssign = async () => {
@@ -4652,7 +4700,8 @@ function AssignmentsPage({ user, onViewAsset }) {
       await api.post('assignments', { asset_id: selectedAsset.id, employee_id: assignTo, assignment_type: 'Normal' });
       toast.success('Asset assigned');
       setQuickAssignOpen(false);
-      loadData();
+      loadAssignments();
+      loadReferenceData();
     } catch (err) { toast.error(err.message); }
   };
 
@@ -4666,7 +4715,7 @@ function AssignmentsPage({ user, onViewAsset }) {
         <TabsList><TabsTrigger value="active">Active Assignments</TabsTrigger><TabsTrigger value="unassigned">Unassigned Assets ({unassignedAssets.length})</TabsTrigger></TabsList>
         
         <TabsContent value="active">
-          <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(k, v) => setFilters({...filters, [k]: v})} onClear={() => setFilters({})} />
+          <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(k, v) => { setFilters({...filters, [k]: v}); setCurrentPage(1); }} onClear={() => { setFilters({}); setCurrentPage(1); }} />
           <Card>
             <Table>
               <TableHeader><TableRow><TableHead>Asset</TableHead><TableHead>Category</TableHead><TableHead>Assigned To</TableHead><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Project</TableHead></TableRow></TableHeader>
@@ -4684,6 +4733,14 @@ function AssignmentsPage({ user, onViewAsset }) {
               </TableBody>
             </Table>
           </Card>
+          <div className="flex items-center justify-between mt-4">
+            <p className="text-sm" style={{color:'rgba(234,229,236,0.55)'}}>{totalAssignments === 0 ? 'No assignments' : `Showing ${(currentPage - 1) * 40 + 1}-${Math.min(currentPage * 40, totalAssignments)} of ${totalAssignments}`}</p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={currentPage <= 1 || loading} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}><ChevronLeft className="h-4 w-4 mr-1" />Previous</Button>
+              <span className="text-sm px-2">Page {currentPage} of {totalPages}</span>
+              <Button variant="outline" size="sm" disabled={currentPage >= totalPages || loading} onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
+            </div>
+          </div>
         </TabsContent>
 
         <TabsContent value="unassigned">
@@ -4705,6 +4762,7 @@ function AssignmentsPage({ user, onViewAsset }) {
               </TableBody>
             </Table>
           </Card>
+          <div className="flex items-center justify-between mt-4"><p className="text-sm" style={{color:'rgba(234,229,236,0.55)'}}>{unassignedTotal===0?'No unassigned assets':`Showing ${(unassignedPage-1)*40+1}-${Math.min(unassignedPage*40,unassignedTotal)} of ${unassignedTotal}`}</p><div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={unassignedPage<=1} onClick={()=>setUnassignedPage(page=>Math.max(1,page-1))}><ChevronLeft className="h-4 w-4 mr-1"/>Previous</Button><span className="text-sm px-2">Page {unassignedPage} of {unassignedPages}</span><Button variant="outline" size="sm" disabled={unassignedPage>=unassignedPages} onClick={()=>setUnassignedPage(page=>Math.min(unassignedPages,page+1))}>Next<ChevronRight className="h-4 w-4 ml-1"/></Button></div></div>
         </TabsContent>
       </Tabs>
 
@@ -4973,25 +5031,34 @@ function MaintenancePage({ user }) {
   const [reassignAction, setReassignAction] = useState('return_to_stock');
   const [reassignEmployeeId, setReassignEmployeeId] = useState('');
   const [employees, setEmployees] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const canCreate = ['super_admin', 'it_admin', 'it_technician'].includes(user.role);
 
   const currencies = ['SAR', 'USD', 'GBP', 'EUR', 'AED', 'QAR', 'KWD', 'BHD', 'OMR', 'INR', 'PKR', 'BDT'];
   const locations = ['Under Warranty', 'Repair Shop', 'In-Office Warehouse'];
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadReferences(); }, []);
+  useEffect(() => { loadRecords(); }, [currentPage]);
 
-  const loadData = async () => {
+  const loadReferences = async () => {
     try {
-      const [recs, ass, emps] = await Promise.all([
-        api.get('maintenance'), 
-        api.get('assets'),
+      const [ass, emps] = await Promise.all([
+        api.get('assets?lightweight=true'),
         api.get('employees?status=Active&lightweight=true')
       ]);
-      setRecords(recs);
       setAssets(ass);
       setEmployees(emps);
     } catch (err) { toast.error('Failed to load data'); }
+  };
+
+  const loadRecords = async () => {
+    try {
+      const result = await api.get(`maintenance?paginated=true&page=${currentPage}&page_size=40`);
+      setRecords(result.items || []); setTotalRecords(result.total || 0); setTotalPages(result.total_pages || 1);
+    } catch (err) { toast.error('Failed to load maintenance records'); }
   };
 
   const openDialog = () => {
@@ -5013,7 +5080,7 @@ function MaintenancePage({ user }) {
       await api.post('maintenance', formData);
       toast.success('Maintenance record created - Asset removed from custody');
       setDialogOpen(false);
-      loadData();
+      loadRecords(); loadReferences();
     } catch (err) { toast.error(err.message); }
   };
 
@@ -5039,7 +5106,7 @@ function MaintenancePage({ user }) {
       });
       toast.success('Maintenance completed - Ready for reassignment');
       setCompleteDialogOpen(false);
-      loadData();
+      loadRecords(); loadReferences();
     } catch (err) { toast.error(err.message); }
   };
 
@@ -5061,7 +5128,7 @@ function MaintenancePage({ user }) {
       });
       toast.success(reassignAction === 'return_to_stock' ? 'Asset returned to stock' : 'Asset assigned to employee');
       setReassignDialogOpen(false);
-      loadData();
+      loadRecords(); loadReferences();
     } catch (err) { toast.error(err.message); }
   };
 
@@ -5077,7 +5144,7 @@ function MaintenancePage({ user }) {
         reason
       });
       toast.success(`Asset ${asset?.category_type === 'SUBSCRIPTION' ? 'canceled' : 'scrapped'} and archived`);
-      loadData();
+      loadRecords(); loadReferences();
     } catch (err) { toast.error(err.message); }
   };
 
@@ -5168,6 +5235,15 @@ function MaintenancePage({ user }) {
           </TableBody>
         </Table>
       </Card>
+
+      <div className="flex items-center justify-between mt-4">
+        <p className="text-sm" style={{color:'rgba(234,229,236,0.55)'}}>{totalRecords === 0 ? 'No maintenance records' : `Showing ${(currentPage - 1) * 40 + 1}-${Math.min(currentPage * 40, totalRecords)} of ${totalRecords}`}</p>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}><ChevronLeft className="h-4 w-4 mr-1" />Previous</Button>
+          <span className="text-sm px-2">Page {currentPage} of {totalPages}</span>
+          <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
+        </div>
+      </div>
 
       {/* Create Maintenance Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -5358,20 +5434,33 @@ function CompanyEmailsPage({ user }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ employee_id:'', email:'' });
   const [saving, setSaving] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalEntries, setTotalEntries] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const confirm = useConfirm();
   const canEdit = ['super_admin', 'it_admin'].includes(user.role);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadReferences(); }, []);
+  useEffect(() => { const timer = setTimeout(() => setDebouncedSearch(search), 300); return () => clearTimeout(timer); }, [search]);
+  useEffect(() => { loadEntries(); }, [filters, debouncedSearch, currentPage]);
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadReferences = async () => {
     try {
-      const [emailData, employeeData, options] = await Promise.all([
-        api.get('company-emails'), api.get('employees?status=Active&lightweight=true'), api.get('filters')
-      ]);
-      setEntries(emailData || []);
+      const [employeeData, options] = await Promise.all([api.get('employees?status=Active&lightweight=true'), api.get('filters')]);
       setEmployees(employeeData || []);
       setFilterOptions(options || {});
+    } catch (err) { toast.error('Failed to load email reference data'); }
+  };
+
+  const loadEntries = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ paginated:'true', page:String(currentPage), page_size:'40' });
+      Object.entries(filters).forEach(([key,value]) => { if (value) params.set(key,value); });
+      if (debouncedSearch) params.set('search', debouncedSearch);
+      const result = await api.get(`company-emails?${params.toString()}`);
+      setEntries(result.items || []); setTotalEntries(result.total || 0); setTotalPages(result.total_pages || 1);
     } catch (err) { toast.error('Failed to load company emails'); }
     finally { setLoading(false); }
   };
@@ -5387,7 +5476,7 @@ function CompanyEmailsPage({ user }) {
       else await api.post('company-emails', form);
       toast.success(editing ? 'Company email updated' : 'Company email assigned');
       setDialogOpen(false);
-      loadData();
+      loadEntries(); loadReferences();
     } catch (err) { toast.error(err.message); }
     finally { setSaving(false); }
   };
@@ -5395,7 +5484,7 @@ function CompanyEmailsPage({ user }) {
   const remove = async (entry) => {
     const ok = await confirm({title:'Remove Company Email',description:`Remove ${entry.email} from ${entry.fullName}?`,confirmLabel:'Remove'});
     if (!ok) return;
-    try { await api.delete(`company-emails/${entry.employee_id}`); toast.success('Company email removed'); loadData(); }
+    try { await api.delete(`company-emails/${entry.employee_id}`); toast.success('Company email removed'); loadEntries(); loadReferences(); }
     catch (err) { toast.error(err.message); }
   };
 
@@ -5412,21 +5501,24 @@ function CompanyEmailsPage({ user }) {
     return true;
   });
 
+  if (loading) return <div className="p-8"><ITdockPageLoader label="Loading company emails" /></div>;
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <div><h1 className="text-2xl font-bold" style={{color:'#eae5ec'}}>Company Emails</h1><p className="text-sm mt-0.5" style={{color:'rgba(234,229,236,0.5)'}}>Employee company email directory</p></div>
         {canEdit && <Button onClick={openAdd} className="bg-[#0d9488]"><Plus className="h-4 w-4 mr-2" />Add Company Email</Button>}
       </div>
-      <div className="relative mb-4"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{color:'rgba(234,229,236,0.4)'}} /><Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search email or employee..." className="pl-9 max-w-md" /></div>
-      <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(key,value)=>setFilters({...filters,[key]:value})} onClear={()=>setFilters({})} />
+      <div className="relative mb-4"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{color:'rgba(234,229,236,0.4)'}} /><Input value={search} onChange={e=>{setSearch(e.target.value);setCurrentPage(1)}} placeholder="Search email or employee..." className="pl-9 max-w-md" /></div>
+      <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(key,value)=>{setFilters({...filters,[key]:value});setCurrentPage(1)}} onClear={()=>{setFilters({});setCurrentPage(1)}} />
       <Card><Table>
         <TableHeader><TableRow><TableHead>Work Email</TableHead><TableHead>Full Name</TableHead><TableHead>Company</TableHead><TableHead>Project</TableHead><TableHead>Department</TableHead><TableHead>Location</TableHead>{canEdit&&<TableHead>Actions</TableHead>}</TableRow></TableHeader>
-        <TableBody>{loading ? <TableRow><TableCell colSpan={canEdit?7:6} className="text-center py-10">Loading...</TableCell></TableRow> : filtered.length===0 ? <TableRow><TableCell colSpan={canEdit?7:6} className="text-center py-10" style={{color:'rgba(234,229,236,0.4)'}}>No company emails found</TableCell></TableRow> : filtered.map(entry=><TableRow key={entry.employee_id}>
+        <TableBody>{filtered.length===0 ? <TableRow><TableCell colSpan={canEdit?7:6} className="text-center py-10" style={{color:'rgba(234,229,236,0.4)'}}>No company emails found</TableCell></TableRow> : filtered.map(entry=><TableRow key={entry.employee_id}>
           <TableCell><a href={`mailto:${entry.email}`} style={{color:'#5eead4'}}>{entry.email}</a></TableCell><TableCell className="font-medium">{entry.fullName}</TableCell><TableCell>{entry.company||'—'}</TableCell><TableCell>{entry.project||'—'}</TableCell><TableCell>{entry.department||'—'}</TableCell><TableCell>{entry.location||'—'}</TableCell>
           {canEdit&&<TableCell><Button size="sm" variant="ghost" onClick={()=>openEdit(entry)}><Pencil className="h-4 w-4" /></Button><Button size="sm" variant="ghost" onClick={()=>remove(entry)}><Trash2 className="h-4 w-4 text-red-500" /></Button></TableCell>}
         </TableRow>)}</TableBody>
       </Table></Card>
+      <div className="flex items-center justify-between mt-4"><p className="text-sm" style={{color:'rgba(234,229,236,0.55)'}}>{totalEntries===0?'No company emails':`Showing ${(currentPage-1)*40+1}-${Math.min(currentPage*40,totalEntries)} of ${totalEntries}`}</p><div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={currentPage<=1} onClick={()=>setCurrentPage(page=>Math.max(1,page-1))}><ChevronLeft className="h-4 w-4 mr-1"/>Previous</Button><span className="text-sm px-2">Page {currentPage} of {totalPages}</span><Button variant="outline" size="sm" disabled={currentPage>=totalPages} onClick={()=>setCurrentPage(page=>Math.min(totalPages,page+1))}>Next<ChevronRight className="h-4 w-4 ml-1"/></Button></div></div>
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{editing?'Edit':'Add'} Company Email</DialogTitle><DialogDescription>Profile details are inherited from the selected employee.</DialogDescription></DialogHeader><div className="space-y-4">
         <div><Label>Employee *</Label><SearchableSelect options={availableEmployees.map(e=>({id:e.id,name:`${e.name} (${e.employee_id})`}))} value={form.employee_id} onChange={value=>setForm({...form,employee_id:value})} placeholder="Select employee..." disabled={!!editing} /></div>
         <div><Label>Work Email *</Label><Input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="name@company.com" /><p className="text-xs mt-1.5" style={{color:'rgba(234,229,236,0.4)'}}>Only use an email address provided by the employee’s company.</p></div>
@@ -5865,8 +5957,8 @@ function ScrapPage({ user }) {
   const loadData = async () => {
     try {
       const [activeData, archivedData] = await Promise.all([
-        api.get('assets'),
-        api.get('assets?archived=true')
+        api.get('assets?lightweight=true'),
+        api.get('assets?archived=true&statuses=Scrapped%2CCanceled')
       ]);
       setAssets((activeData || []).filter(a => !['Scrapped', 'Canceled'].includes(a.status)));
       const allAssetRows = [...(activeData || []), ...(archivedData || [])];
@@ -6027,19 +6119,23 @@ function AuditsPage({ user }) {
   const [rescheduleAudit, setRescheduleAudit] = useState(null);
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [auditCadence, setAuditCadence] = useState({ intervalMonths: 2, advanceDays: 7 });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalAudits, setTotalAudits] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const normalizedRoles = user.roles || [];
   const canReschedule = user.role === 'super_admin' || normalizedRoles.includes('admin') || normalizedRoles.includes('it_support');
 
-  useEffect(() => { loadData(); }, [filterStatus]);
+  useEffect(() => { loadData(); }, [filterStatus, currentPage]);
 
   const loadData = async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (filterStatus) params.set('status', filterStatus);
+      params.set('paginated','true'); params.set('page',String(currentPage)); params.set('page_size','40');
       const [data, cadence] = await Promise.all([api.get(`audits?${params.toString()}`), api.get('settings/audit-schedule').catch(() => auditCadence)]);
-      setAudits(data || []);
+      setAudits(data.items || []); setTotalAudits(data.total || 0); setTotalPages(data.total_pages || 1);
       setAuditCadence(cadence || auditCadence);
     } catch { toast.error('Failed to load audits'); }
     setLoading(false);
@@ -6082,7 +6178,7 @@ function AuditsPage({ user }) {
 
   const openManualDialog = async () => {
     try {
-      const assets = await api.get('assets');
+      const assets = await api.get('assets?lightweight=true');
       setManualAssets((assets || []).filter(a => !a.archived && a.status !== 'Scrapped'));
     } catch { setManualAssets([]); }
     setManualAssetId('');
@@ -6128,6 +6224,8 @@ function AuditsPage({ user }) {
     return <span className="text-xs font-bold px-2 py-0.5 rounded" style={{background: c.bg, color: c.color}}>{c.label}</span>;
   };
 
+  if (loading) return <div className="p-8"><ITdockPageLoader label="Loading audits" /></div>;
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
@@ -6141,7 +6239,7 @@ function AuditsPage({ user }) {
       {/* Filter bar */}
       <div className="flex gap-2 mb-4">
         {['', 'scheduled', 'overdue', 'completed', 'skipped'].map(s => (
-          <button key={s} className="text-xs px-3 py-1.5 rounded-full font-medium" style={{ background: filterStatus === s ? '#0d9488' : 'rgba(255,255,255,0.06)', color: filterStatus === s ? '#fff' : 'rgba(234,229,236,0.6)' }} onClick={() => setFilterStatus(s)}>
+          <button key={s} className="text-xs px-3 py-1.5 rounded-full font-medium" style={{ background: filterStatus === s ? '#0d9488' : 'rgba(255,255,255,0.06)', color: filterStatus === s ? '#fff' : 'rgba(234,229,236,0.6)' }} onClick={() => { setFilterStatus(s); setCurrentPage(1); }}>
             {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
@@ -6191,6 +6289,8 @@ function AuditsPage({ user }) {
           </TableBody>
         </Table>
       </Card>
+
+      <div className="flex items-center justify-between mt-4"><p className="text-sm" style={{color:'rgba(234,229,236,0.55)'}}>{totalAudits===0?'No audits':`Showing ${(currentPage-1)*40+1}-${Math.min(currentPage*40,totalAudits)} of ${totalAudits}`}</p><div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={currentPage<=1||loading} onClick={()=>setCurrentPage(page=>Math.max(1,page-1))}><ChevronLeft className="h-4 w-4 mr-1"/>Previous</Button><span className="text-sm px-2">Page {currentPage} of {totalPages}</span><Button variant="outline" size="sm" disabled={currentPage>=totalPages||loading} onClick={()=>setCurrentPage(page=>Math.min(totalPages,page+1))}>Next<ChevronRight className="h-4 w-4 ml-1"/></Button></div></div>
 
       <Dialog open={rescheduleOpen} onOpenChange={setRescheduleOpen}>
         <DialogContent className="max-w-sm">
@@ -6340,7 +6440,7 @@ function SmtpSettingsTab() {
     setTesting(false);
   };
 
-  if (loading) return <p className="text-sm p-4" style={{color:'rgba(234,229,236,0.5)'}}>Loading…</p>;
+  if (loading) return <div className="p-8"><ITdockPageLoader label="Loading settings" /></div>;
 
   const fieldStyle = { background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:'8px', padding:'8px 12px', color:'#eae5ec', fontSize:'14px', width:'100%', outline:'none' };
   const labelStyle = { color:'rgba(234,229,236,0.6)', fontSize:'13px', display:'block', marginBottom:'6px' };

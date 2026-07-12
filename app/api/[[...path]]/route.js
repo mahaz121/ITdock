@@ -431,7 +431,11 @@ async function ensureUniqueIndexes(db) {
       db.collection('users').createIndex({ username: 1 }, { unique: true, name: 'uniq_username', partialFilterExpression: nonEmptyString('username'), collation: ci }),
       db.collection('employees').createIndex({ archived: 1, company_id: 1, project_id: 1, location_id: 1, department_id: 1, name: 1 }, { name: 'employee_list_filters' }),
       db.collection('assignments').createIndex({ employee_id: 1, unassigned_date: 1 }, { name: 'active_assignments_by_employee' }),
-      db.collection('extensions').createIndex({ departmentId: 1, locationId: 1, permission: 1, assignedTo: 1 }, { name: 'extension_list_filters' })
+      db.collection('assignments').createIndex({ asset_id: 1, unassigned_date: 1, assigned_date: -1 }, { name: 'assignment_list_by_asset' }),
+      db.collection('extensions').createIndex({ departmentId: 1, locationId: 1, permission: 1, assignedTo: 1 }, { name: 'extension_list_filters' }),
+      db.collection('assets').createIndex({ archived: 1, status: 1, company_id: 1, project_id: 1, location_id: 1, category: 1, asset_tag: 1 }, { name: 'asset_list_filters' }),
+      db.collection('maintenance').createIndex({ asset_id: 1, date: -1 }, { name: 'maintenance_asset_date' }),
+      db.collection('assetAudits').createIndex({ status: 1, scheduledDate: -1, assetId: 1 }, { name: 'audit_list_status_date' })
     ]).catch(error => {
       console.error('[ITdock indexes] Unique indexes could not be created. Remove existing duplicates, then restart the app.', error);
       // Do not retry every index on every API request. Validation still runs in the
@@ -679,7 +683,18 @@ export async function GET(request, { params }) {
 
   // Company Emails — derived directly from employee records
   if (route === 'company-emails') {
-    const employees = await db.collection('employees').find({ company_email: { $exists: true, $type: 'string', $ne: '' }, archived: { $ne: true } }).sort({ name: 1 }).toArray();
+    const paginated = url.searchParams.get('paginated') === 'true';
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
+    const employeeFilter = { company_email: { $exists: true, $type: 'string', $ne: '' }, archived: { $ne: true } };
+    for (const field of ['company_id', 'project_id', 'department_id', 'location_id']) {
+      const value = url.searchParams.get(field); if (value) employeeFilter[field] = value;
+    }
+    const search = url.searchParams.get('search');
+    if (search) employeeFilter.$or = [{ name: { $regex: search, $options: 'i' } }, { company_email: { $regex: search, $options: 'i' } }];
+    const employeeQuery = db.collection('employees').find(employeeFilter).sort({ name: 1 });
+    if (paginated) employeeQuery.skip((page - 1) * pageSize).limit(pageSize);
+    const [employees, total] = await Promise.all([employeeQuery.toArray(), paginated ? db.collection('employees').countDocuments(employeeFilter) : Promise.resolve(null)]);
     const [companies, projects, departments, locations] = await Promise.all([
       db.collection('companies').find({}).toArray(),
       db.collection('projects').find({}).toArray(),
@@ -690,14 +705,16 @@ export async function GET(request, { params }) {
     const projectMap = Object.fromEntries(projects.map(x => [x.id, x.name]));
     const departmentMap = Object.fromEntries(departments.map(x => [x.id, x.name]));
     const locationMap = Object.fromEntries(locations.map(x => [x.id, x.name]));
-    return json(employees.map(employee => ({
+    const items = employees.map(employee => ({
       id: employee.id, employee_id: employee.id, email: employee.company_email,
       fullName: employee.name, company_id: employee.company_id || null,
       project_id: employee.project_id || null, department_id: employee.department_id || null,
       location_id: employee.location_id || null,
       company: companyMap[employee.company_id] || '', project: projectMap[employee.project_id] || '',
       department: departmentMap[employee.department_id] || '', location: locationMap[employee.location_id] || ''
-    })));
+    }));
+    if (paginated) return json({ items, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
+    return json(items);
   }
 
   // Categories (for assets) - GET
@@ -1353,7 +1370,11 @@ export async function GET(request, { params }) {
   
   if (route === 'assets') {
     const filter = {};
+    const paginated = url.searchParams.get('paginated') === 'true';
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
     const status = url.searchParams.get('status');
+    const statuses = url.searchParams.get('statuses');
     const category = url.searchParams.get('category');
     const category_name = url.searchParams.get('category_name');
     const lightweight = url.searchParams.get('lightweight') === 'true';
@@ -1365,14 +1386,18 @@ export async function GET(request, { params }) {
     const department_id = url.searchParams.get('department_id');
     const search = url.searchParams.get('search');
     const archived = url.searchParams.get('archived'); // New archived filter
+    const renewalBefore = url.searchParams.get('renewal_before');
+    const iotOnly = url.searchParams.get('iot_only') === 'true';
     
     if (status) filter.status = status;
+    if (statuses) filter.status = { $in: statuses.split(',').map(value => value.trim()).filter(Boolean) };
     if (category) filter.category = category;
     if (asset_type) filter.asset_type = asset_type;
     if (company_id) filter.company_id = company_id;
     if (project_id) filter.project_id = project_id;
     if (location_id) filter.location_id = location_id;
     if (department_id) filter.department_id = department_id;
+    if (renewalBefore) filter.renewal_date = { $exists: true, $ne: '', $lte: renewalBefore };
     
     // Handle archived filter
     if (archived === 'true') {
@@ -1391,12 +1416,19 @@ export async function GET(request, { params }) {
     // Get categories to filter by category_type
     const categories = await db.collection('categories').find({}).toArray();
     const categoryMap = Object.fromEntries(categories.map(c => [c.id, c]));
+    if (category_type) filter.category = { $in: categories.filter(item => item.category_type === category_type).map(item => item.id) };
+    if (iotOnly) filter.category = { $in: categories.filter(item => item.isIoT).map(item => item.id) };
     if (category_name) {
       const matchingCategoryIds = categories.filter(item => item.name?.toLowerCase() === category_name.toLowerCase()).map(item => item.id);
       filter.category = { $in: matchingCategoryIds };
     }
     const assetProjection = lightweight ? { id: 1, asset_tag: 1, category: 1, brand: 1, serial_number: 1, status: 1, assigned_to: 1 } : undefined;
-    const assets = await db.collection('assets').find(filter, assetProjection ? { projection: assetProjection } : {}).toArray();
+    const assetsQuery = db.collection('assets').find(filter, assetProjection ? { projection: assetProjection } : {}).sort({ asset_tag: 1 });
+    if (paginated) assetsQuery.skip((page - 1) * pageSize).limit(pageSize);
+    const [assets, total] = await Promise.all([
+      assetsQuery.toArray(),
+      paginated ? db.collection('assets').countDocuments(filter) : Promise.resolve(null),
+    ]);
     
     // Filter by category_type if specified
     let filteredAssets = assets;
@@ -1407,7 +1439,9 @@ export async function GET(request, { params }) {
       });
     }
     if (lightweight) {
-      return json(filteredAssets.map(asset => ({ ...asset, category_name: categoryMap[asset.category]?.name || asset.category || '' })));
+      const items = filteredAssets.map(asset => ({ ...asset, category_name: categoryMap[asset.category]?.name || asset.category || '', category_type: categoryMap[asset.category]?.category_type || asset.category_type || '' }));
+      if (paginated) return json({ items, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
+      return json(items);
     }
     
     // Get employee names for assigned assets
@@ -1437,24 +1471,33 @@ export async function GET(request, { params }) {
       isIoT: !!(categoryMap[a.category]?.isIoT)
     }));
     
+    if (paginated) return json({ items: assetsWithDetails, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
     return json(assetsWithDetails);
   }
 
   // Unassigned assets (In Stock)
   if (route === 'assets/unassigned') {
-    const assets = await db.collection('assets').find({ status: 'In Stock', archived: { $ne: true } }).toArray();
+    const paginated = url.searchParams.get('paginated') === 'true';
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
+    const filter = { status: 'In Stock', archived: { $ne: true } };
+    const query = db.collection('assets').find(filter, { projection: { id:1, asset_tag:1, category:1, brand:1, location_id:1, status:1 } }).sort({ asset_tag:1 });
+    if (paginated) query.skip((page-1)*pageSize).limit(pageSize);
+    const [assets,total] = await Promise.all([query.toArray(),paginated?db.collection('assets').countDocuments(filter):Promise.resolve(null)]);
     const [categories, locations] = await Promise.all([
       db.collection('categories').find({}).toArray(),
       db.collection('locations').find({}).toArray()
     ]);
     const categoryMap = Object.fromEntries(categories.map(c => [c.id, c]));
     const locationMap = Object.fromEntries(locations.map(l => [l.id, l.name]));
-    return json(assets.map(a => ({
+    const items = assets.map(a => ({
       ...a,
       category_name: categoryMap[a.category]?.name || a.category || '',
       category_type: categoryMap[a.category]?.category_type || a.category_type || '',
       location_name: locationMap[a.location_id] || ''
-    })));
+    }));
+    if (paginated) return json({items,total,page,page_size:pageSize,total_pages:Math.max(1,Math.ceil(total/pageSize))});
+    return json(items);
   }
 
   // Single asset with activity log
@@ -1509,6 +1552,9 @@ export async function GET(request, { params }) {
   
   if (route === 'assignments') {
     const filter = {};
+    const paginated = url.searchParams.get('paginated') === 'true';
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
     const company_id = url.searchParams.get('company_id');
     const project_id = url.searchParams.get('project_id');
     const location_id = url.searchParams.get('location_id');
@@ -1516,8 +1562,22 @@ export async function GET(request, { params }) {
     const active_only = url.searchParams.get('active_only');
     
     if (active_only === 'true') filter.unassigned_date = null;
-    
-    const assignments = await db.collection('assignments').find(filter).toArray();
+    if (company_id || project_id || location_id || department_id) {
+      const assetFilter = {};
+      if (company_id) assetFilter.company_id = company_id;
+      if (project_id) assetFilter.project_id = project_id;
+      if (location_id) assetFilter.location_id = location_id;
+      if (department_id) assetFilter.department_id = department_id;
+      const matchingAssets = await db.collection('assets').find(assetFilter, { projection: { id: 1 } }).toArray();
+      filter.asset_id = { $in: matchingAssets.map(asset => asset.id) };
+    }
+
+    const assignmentsQuery = db.collection('assignments').find(filter).sort({ assigned_date: -1 });
+    if (paginated) assignmentsQuery.skip((page - 1) * pageSize).limit(pageSize);
+    const [assignments, total] = await Promise.all([
+      assignmentsQuery.toArray(),
+      paginated ? db.collection('assignments').countDocuments(filter) : Promise.resolve(null),
+    ]);
     
     // Enrich with employee and asset details
     const employeeIds = [...new Set(assignments.map(a => a.employee_id).filter(id => id && id !== 'company'))];
@@ -1564,13 +1624,22 @@ export async function GET(request, { params }) {
       enrichedAssignments = enrichedAssignments.filter(a => a.asset_location_id === location_id);
     }
     
+    if (paginated) return json({ items: enrichedAssignments, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
     return json(enrichedAssignments);
   }
 
   // ============ MAINTENANCE ============
   
   if (route === 'maintenance') {
-    const records = await db.collection('maintenance').find({}).sort({ date: -1 }).toArray();
+    const assetId = url.searchParams.get('asset_id');
+    const paginated = url.searchParams.get('paginated') === 'true';
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
+    const filter = assetId ? { asset_id: assetId } : {};
+    const recordsQuery = db.collection('maintenance').find(filter).sort({ date: -1 });
+    if (paginated) recordsQuery.skip((page - 1) * pageSize).limit(pageSize);
+    const [records, total] = await Promise.all([recordsQuery.toArray(), paginated ? db.collection('maintenance').countDocuments(filter) : Promise.resolve(null)]);
+    if (paginated) return json({ items: records, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
     return json(records);
   }
 
@@ -1754,23 +1823,35 @@ export async function GET(request, { params }) {
     const assetId = url.searchParams.get('asset_id') || '';
     const employeeId = url.searchParams.get('employee_id') || '';
     const query = {};
+    const paginated = url.searchParams.get('paginated') === 'true';
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
     if (status) query.status = status;
     if (assetId) query.assetId = assetId;
     if (employeeId) query.employeeId = employeeId;
-    const audits = await db.collection('assetAudits').find(query).sort({ scheduledDate: -1 }).toArray();
-    const assets = await db.collection('assets').find({}).toArray();
-    const employees = await db.collection('employees').find({}).toArray();
-    const users = await db.collection('users').find({}).toArray();
+    const auditQuery = db.collection('assetAudits').find(query).sort({ scheduledDate: -1 });
+    if (paginated) auditQuery.skip((page - 1) * pageSize).limit(pageSize);
+    const [audits, total] = await Promise.all([auditQuery.toArray(), paginated ? db.collection('assetAudits').countDocuments(query) : Promise.resolve(null)]);
+    const assetIds = [...new Set(audits.map(audit => audit.assetId).filter(Boolean))];
+    const employeeIds = [...new Set(audits.map(audit => audit.employeeId).filter(id => id && id !== 'company'))];
+    const userIds = [...new Set(audits.map(audit => audit.conductedBy).filter(Boolean))];
+    const [assets, employees, users] = await Promise.all([
+      assetIds.length ? db.collection('assets').find({ id: { $in: assetIds } }, { projection: { id:1, asset_tag:1 } }).toArray() : [],
+      employeeIds.length ? db.collection('employees').find({ id: { $in: employeeIds } }, { projection: { id:1, name:1 } }).toArray() : [],
+      userIds.length ? db.collection('users').find({ id: { $in: userIds } }, { projection: { id:1, name:1 } }).toArray() : [],
+    ]);
     const assetById = Object.fromEntries(assets.map(a => [a.id, a]));
     const empById = Object.fromEntries(employees.map(e => [e.id, e]));
     const userById = Object.fromEntries(users.map(u => [u.id, u]));
-    return json(audits.map(a => ({
+    const items = audits.map(a => ({
       ...a,
       asset_tag: assetById[a.assetId]?.asset_tag || a.assetId,
       asset_name: assetById[a.assetId]?.asset_tag || '',
       employee_name: empById[a.employeeId]?.name || (a.employeeId === 'company' ? 'Company' : '—'),
       conducted_by_name: userById[a.conductedBy]?.name || ''
-    })));
+    }));
+    if (paginated) return json({ items, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
+    return json(items);
   }
 
   // GET /api/audits/due — list due and overdue audits
