@@ -415,6 +415,28 @@ async function checkManagerHierarchy(db, employeeId, newManagerId) {
   return subordinates.has(newManagerId);
 }
 
+let uniqueIndexPromise = null;
+async function ensureUniqueIndexes(db) {
+  if (!uniqueIndexPromise) {
+    const ci = { locale: 'en', strength: 2 };
+    const nonEmptyString = field => ({ [field]: { $type: 'string', $gt: '' } });
+    uniqueIndexPromise = Promise.all([
+      db.collection('assets').createIndex({ asset_tag: 1 }, { unique: true, name: 'uniq_asset_tag', collation: ci }),
+      db.collection('assets').createIndex({ serial_number: 1 }, { unique: true, name: 'uniq_asset_serial', partialFilterExpression: nonEmptyString('serial_number'), collation: ci }),
+      db.collection('employees').createIndex({ employee_id: 1 }, { unique: true, name: 'uniq_employee_id', collation: ci }),
+      db.collection('employees').createIndex({ mobile_number: 1 }, { unique: true, name: 'uniq_employee_mobile', partialFilterExpression: nonEmptyString('mobile_number') }),
+      db.collection('employees').createIndex({ company_email: 1 }, { unique: true, name: 'uniq_employee_work_email', partialFilterExpression: nonEmptyString('company_email'), collation: ci }),
+      db.collection('extensions').createIndex({ extensionNumber: 1 }, { unique: true, name: 'uniq_extension_number', collation: ci }),
+      db.collection('users').createIndex({ email: 1 }, { unique: true, name: 'uniq_user_email', collation: ci }),
+      db.collection('users').createIndex({ username: 1 }, { unique: true, name: 'uniq_username', partialFilterExpression: nonEmptyString('username'), collation: ci })
+    ]).catch(error => {
+      uniqueIndexPromise = null;
+      console.error('[ITdock indexes] Unique indexes could not be created. Remove existing duplicates, then restart the app.', error);
+    });
+  }
+  await uniqueIndexPromise;
+}
+
 // Seed default admin and master data
 async function seedAdmin(db) {
   // Only create default admin if NO users exist at all (fresh install)
@@ -471,6 +493,7 @@ async function seedAdmin(db) {
   // Purge stale login_attempts records older than 1 hour that aren't locked
   const attemptsCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   db.collection('login_attempts').deleteMany({ last_attempt: { $lt: attemptsCutoff }, locked_until: null }).catch(() => {});
+  await ensureUniqueIndexes(db);
 }
 
 export async function OPTIONS() {
@@ -2085,18 +2108,25 @@ export async function POST(request, { params }) {
     
     const body = await request.json();
     const { email, password, name } = body;
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedUsername = body.username?.trim() || '';
     const roles = normalizeRoles(body.roles || body.role);
     
-    if (!email || !password || !name || !roles.length) {
+    if (!normalizedEmail || !password || !name || !roles.length) {
       return error('All fields required');
     }
     
-    const existing = await db.collection('users').findOne({ email });
-    if (existing) return error('Email already exists');
+    const existing = await db.collection('users').findOne({ email: normalizedEmail }, { collation: { locale: 'en', strength: 2 } });
+    if (existing) return error(`Login email "${normalizedEmail}" already exists`, 409);
+    if (normalizedUsername) {
+      const usernameDuplicate = await db.collection('users').findOne({ username: normalizedUsername }, { collation: { locale: 'en', strength: 2 } });
+      if (usernameDuplicate) return error(`Username "${normalizedUsername}" already exists`, 409);
+    }
     
     const newUser = {
       id: uuidv4(),
-      email,
+      email: normalizedEmail,
+      ...(normalizedUsername ? { username: normalizedUsername } : {}),
       password: hashPassword(password),
       name,
       role: roles[0],
@@ -2105,9 +2135,9 @@ export async function POST(request, { params }) {
     };
     
     await db.collection('users').insertOne(newUser);
-    await logAudit(db, user.id, 'CREATE', 'user', newUser.id, { email, roles });
+    await logAudit(db, user.id, 'CREATE', 'user', newUser.id, { email: normalizedEmail, roles });
     
-    return json({ id: newUser.id, email, name, role: roles[0], roles }, 201);
+    return json({ id: newUser.id, email: normalizedEmail, name, role: roles[0], roles }, 201);
   }
 
   // ============ EMPLOYEES ============
@@ -2129,8 +2159,14 @@ export async function POST(request, { params }) {
       return error('Company, Location, and Department are required');
     }
     
-    const existing = await db.collection('employees').findOne({ employee_id });
-    if (existing) return error('Employee ID already exists');
+    const normalizedEmployeeId = employee_id.trim();
+    const normalizedMobile = mobile_number?.trim() || '';
+    const existing = await db.collection('employees').findOne({ employee_id: normalizedEmployeeId }, { collation: { locale: 'en', strength: 2 } });
+    if (existing) return error(`Employee ID "${normalizedEmployeeId}" already exists`, 409);
+    if (normalizedMobile) {
+      const duplicateMobile = await db.collection('employees').findOne({ mobile_number: normalizedMobile });
+      if (duplicateMobile) return error(`Phone number "${normalizedMobile}" is already assigned to ${duplicateMobile.name}`, 409);
+    }
     const companyEmail = rest.company_email?.trim().toLowerCase() || '';
     if (companyEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(companyEmail)) return error('Enter a valid company email address');
     if (companyEmail) {
@@ -2147,13 +2183,13 @@ export async function POST(request, { params }) {
     const newEmployee = {
       id: uuidv4(),
       name,
-      employee_id,
+      employee_id: normalizedEmployeeId,
       company_id,
       project_id: project_id || null,
       location_id,
       department_id,
       manager_id: manager_id || null,
-      mobile_number: mobile_number || '',
+      mobile_number: normalizedMobile,
       telephone_extension: telephone_extension || '',
       status,
       vacation_start_date: null,
@@ -2199,12 +2235,18 @@ export async function POST(request, { params }) {
       : categoryType === 'CONSUMABLE' ? 'Consumable'
       : 'Physical';
 
-    const existing = await db.collection('assets').findOne({ asset_tag });
-    if (existing) return error('Asset tag already exists');
+    const normalizedAssetTag = asset_tag.trim();
+    const normalizedSerial = serial_number?.trim() || '';
+    const existing = await db.collection('assets').findOne({ asset_tag: normalizedAssetTag }, { collation: { locale: 'en', strength: 2 } });
+    if (existing) return error(`Asset tag "${normalizedAssetTag}" already exists`, 409);
+    if (normalizedSerial) {
+      const serialDuplicate = await db.collection('assets').findOne({ serial_number: normalizedSerial }, { collation: { locale: 'en', strength: 2 } });
+      if (serialDuplicate) return error(`Serial number "${normalizedSerial}" is already used by asset ${serialDuplicate.asset_tag}`, 409);
+    }
 
     const newAsset = {
       id: uuidv4(),
-      asset_tag,
+      asset_tag: normalizedAssetTag,
       asset_type: body.asset_type || derivedAssetType,
       category,
       category_type: categoryType,
@@ -2219,7 +2261,7 @@ export async function POST(request, { params }) {
       notes: notes || '',
       warranty_applicable: warranty_applicable || 'N-A',
       warranty_end_date: warranty_end_date || '',
-      serial_number: serial_number || '',
+      serial_number: normalizedSerial,
       connection_type: connection_type || '',
       expiry_date: expiry_date || '',
       renewal_date: renewal_date || '',
@@ -3278,8 +3320,9 @@ export async function POST(request, { params }) {
     if (!extensionNumber?.trim()) return error('extensionNumber is required');
     if (!body.assignedTo) return error('assignedTo is required');
     if (!['internal', 'local', 'international'].includes(permission)) return error('Invalid permission');
-    const existing = await db.collection('extensions').findOne({ extensionNumber: extensionNumber.trim() });
-    if (existing) return error(`Extension ${extensionNumber} already exists`, 409);
+    const normalizedExtension = extensionNumber.trim();
+    const existing = await db.collection('extensions').findOne({ extensionNumber: normalizedExtension }, { collation: { locale: 'en', strength: 2 } });
+    if (existing) return error(`Extension number "${normalizedExtension}" already exists`, 409);
     const assignedEmployee = await db.collection('employees').findOne({ id: body.assignedTo });
     if (!assignedEmployee) return error('Assigned employee not found', 404);
     const phoneType = ['softphone', 'physical'].includes(body.phoneType) ? body.phoneType : 'none';
@@ -3291,7 +3334,7 @@ export async function POST(request, { params }) {
     }
     const doc = {
       id: uuidv4(),
-      extensionNumber: extensionNumber.trim(),
+      extensionNumber: normalizedExtension,
       name: assignedEmployee.name || extensionNumber.trim(),
       departmentId: body.departmentId || null,
       locationId: body.locationId || null,
@@ -3534,12 +3577,21 @@ export async function PUT(request, { params }) {
     
     // Allow email editing with uniqueness check
     if (body.email) {
+      const normalizedEmail = body.email.trim().toLowerCase();
       const existingUser = await db.collection('users').findOne({ 
-        email: body.email, 
+        email: normalizedEmail,
         id: { $ne: userId } 
-      });
-      if (existingUser) return error('Email already in use by another user');
-      updates.email = body.email;
+      }, { collation: { locale: 'en', strength: 2 } });
+      if (existingUser) return error(`Login email "${normalizedEmail}" is already in use`, 409);
+      updates.email = normalizedEmail;
+    }
+    if (body.username !== undefined) {
+      const normalizedUsername = body.username?.trim() || '';
+      if (normalizedUsername) {
+        const duplicateUsername = await db.collection('users').findOne({ username: normalizedUsername, id: { $ne: userId } }, { collation: { locale: 'en', strength: 2 } });
+        if (duplicateUsername) return error(`Username "${normalizedUsername}" is already in use`, 409);
+      }
+      updates.username = normalizedUsername;
     }
     
     if (body.password) {
@@ -3567,6 +3619,21 @@ export async function PUT(request, { params }) {
     
     const employee = await db.collection('employees').findOne({ id: empId });
     if (!employee) return error('Employee not found', 404);
+    if (body.employee_id !== undefined) {
+      const employeeIdValue = body.employee_id?.trim();
+      if (!employeeIdValue) return error('Employee ID is required');
+      const duplicateId = await db.collection('employees').findOne({ employee_id: employeeIdValue, id: { $ne: empId } }, { collation: { locale: 'en', strength: 2 } });
+      if (duplicateId) return error(`Employee ID "${employeeIdValue}" already exists`, 409);
+      body.employee_id = employeeIdValue;
+    }
+    if (body.mobile_number !== undefined) {
+      const mobileValue = body.mobile_number?.trim() || '';
+      if (mobileValue) {
+        const duplicateMobile = await db.collection('employees').findOne({ mobile_number: mobileValue, id: { $ne: empId } });
+        if (duplicateMobile) return error(`Phone number "${mobileValue}" is already assigned to ${duplicateMobile.name}`, 409);
+      }
+      body.mobile_number = mobileValue;
+    }
     if (body.company_email !== undefined) {
       const companyEmail = body.company_email?.trim().toLowerCase() || '';
       if (companyEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(companyEmail)) return error('Enter a valid company email address');
@@ -3704,8 +3771,24 @@ export async function PUT(request, { params }) {
     
     const asset = await db.collection('assets').findOne({ id: assetId });
     if (!asset) return error('Asset not found', 404);
+    if (body.asset_tag !== undefined) {
+      const assetTagValue = body.asset_tag?.trim();
+      if (!assetTagValue) return error('Asset tag is required');
+      const duplicateTag = await db.collection('assets').findOne({ asset_tag: assetTagValue, id: { $ne: assetId } }, { collation: { locale: 'en', strength: 2 } });
+      if (duplicateTag) return error(`Asset tag "${assetTagValue}" already exists`, 409);
+      body.asset_tag = assetTagValue;
+    }
+    if (body.serial_number !== undefined) {
+      const serialValue = body.serial_number?.trim() || '';
+      if (serialValue) {
+        const duplicateSerial = await db.collection('assets').findOne({ serial_number: serialValue, id: { $ne: assetId } }, { collation: { locale: 'en', strength: 2 } });
+        if (duplicateSerial) return error(`Serial number "${serialValue}" is already used by asset ${duplicateSerial.asset_tag}`, 409);
+      }
+      body.serial_number = serialValue;
+    }
     
     const updates = { ...body, updated_at: new Date().toISOString() };
+    delete updates._id;
     delete updates.id;
     delete updates.created_at;
     delete updates.activity_log;
@@ -3836,8 +3919,9 @@ export async function PUT(request, { params }) {
     const existing = await db.collection('extensions').findOne({ id: extId });
     if (!existing) return error('Extension not found', 404);
     if (body.extensionNumber && body.extensionNumber.trim() !== existing.extensionNumber) {
-      const dup = await db.collection('extensions').findOne({ extensionNumber: body.extensionNumber.trim(), id: { $ne: extId } });
-      if (dup) return error(`Extension ${body.extensionNumber} already exists`, 409);
+      const normalizedExtension = body.extensionNumber.trim();
+      const dup = await db.collection('extensions').findOne({ extensionNumber: normalizedExtension, id: { $ne: extId } }, { collation: { locale: 'en', strength: 2 } });
+      if (dup) return error(`Extension number "${normalizedExtension}" already exists`, 409);
     }
     let assignedEmployee = null;
     if (body.assignedTo !== undefined) {
