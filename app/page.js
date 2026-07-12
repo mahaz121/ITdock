@@ -1779,6 +1779,11 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
   const [showArchived, setShowArchived] = useState(false);
   const [inlineEditId, setInlineEditId] = useState(null);
   const [inlineEditData, setInlineEditData] = useState({});
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importRows, setImportRows] = useState([]);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importFileName, setImportFileName] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
   const confirm = useConfirm();
 
   const canEdit = ['super_admin', 'it_admin'].includes(user.role);
@@ -1889,6 +1894,57 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
     toast.success('Excel file downloaded');
   };
 
+  const resetEmployeeImport = () => {
+    setImportRows([]);
+    setImportPreview(null);
+    setImportFileName('');
+    setImportLoading(false);
+  };
+
+  const handleEmployeeImportFile = async (file) => {
+    if (!file) return;
+    setImportLoading(true);
+    setImportPreview(null);
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      if (!sheet) throw new Error('The workbook does not contain a worksheet');
+      const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false }).map(row =>
+        Object.fromEntries(Object.entries(row).map(([header, value]) => [String(header).trim(), value]))
+      );
+      const requiredHeaders = ['Company', 'Department', 'Employee Name', 'Designation', 'Manager', 'Work Phone', 'Employee ID', 'Project'];
+      const headers = parsed.length ? Object.keys(parsed[0]).map(header => String(header).trim()) : [];
+      const missingHeaders = requiredHeaders.filter(header => !headers.includes(header));
+      if (missingHeaders.length) throw new Error(`Missing required columns: ${missingHeaders.join(', ')}`);
+      const rows = parsed
+        .map(row => Object.fromEntries(requiredHeaders.map(header => [header, String(row[header] ?? '').trim()])))
+        .filter(row => requiredHeaders.some(header => row[header]));
+      if (!rows.length) throw new Error('The spreadsheet contains no employee rows');
+      const preview = await api.post('employees/import', { rows, dry_run: true });
+      setImportRows(rows);
+      setImportPreview(preview);
+      setImportFileName(file.name);
+    } catch (err) {
+      resetEmployeeImport();
+      toast.error(err.message);
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const confirmEmployeeImport = async () => {
+    if (!importRows.length || importPreview?.issues?.length) return;
+    setImportLoading(true);
+    try {
+      const result = await api.post('employees/import', { rows: importRows, dry_run: false });
+      toast.success(`Imported ${result.total} employees: ${result.create_employees} created, ${result.update_employees} updated`);
+      setImportDialogOpen(false);
+      resetEmployeeImport();
+      loadData();
+    } catch (err) { toast.error(err.message); }
+    finally { setImportLoading(false); }
+  };
+
   return (
     <div className="p-8">
       <div className="flex justify-between items-center mb-6">
@@ -1903,6 +1959,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
             <label htmlFor="archived-emp" className="text-sm text-[#1D1D1F] cursor-pointer">Show Archived</label>
           </div>
           <Button onClick={exportEmployees} variant="outline" size="sm"><Download className="h-4 w-4 mr-2" />Export</Button>
+          {canEdit && <Button onClick={() => { resetEmployeeImport(); setImportDialogOpen(true); }} variant="outline" size="sm"><Upload className="h-4 w-4 mr-2" />Import Excel</Button>}
           {canEdit && <Button onClick={openDialog} className="bg-[#0d9488] hover:bg-[#0062CC]"><Plus className="h-4 w-4 mr-2" />Add Employee</Button>}
         </div>
       </div>
@@ -2054,6 +2111,62 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleSubmit} className="bg-[#0d9488] hover:bg-[#0062CC]">Create Employee</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Employee Excel Import */}
+      <Dialog open={importDialogOpen} onOpenChange={(open) => { setImportDialogOpen(open); if (!open) resetEmployeeImport(); }}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Import Employees from Excel</DialogTitle>
+            <DialogDescription>Upload an Excel file with these columns: Company, Department, Employee Name, Designation, Manager, Work Phone, Employee ID, and Project.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Excel file (.xlsx or .xls)</Label>
+              <Input type="file" accept=".xlsx,.xls" disabled={importLoading} onChange={event => handleEmployeeImportFile(event.target.files?.[0])} />
+              <p className="text-xs mt-1.5" style={{color:'rgba(234,229,236,0.5)'}}>Existing employees are updated by Employee ID. Empty spreadsheet cells remain empty. Missing master data is created automatically.</p>
+            </div>
+            {importLoading && <div className="flex items-center gap-2 text-sm"><RefreshCw className="h-4 w-4 animate-spin" />Reading and validating the spreadsheet…</div>}
+            {importPreview && <>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {[
+                  ['Rows', importPreview.total],
+                  ['New employees', importPreview.create_employees],
+                  ['Employees updated', importPreview.update_employees],
+                  ['Companies created', importPreview.create_companies],
+                  ['Departments created', importPreview.create_departments],
+                  ['Projects created', importPreview.create_projects],
+                  ['Managers not matched', importPreview.unmatched_managers],
+                ].map(([label, value]) => <Card key={label}><CardContent className="p-3"><p className="text-xs" style={{color:'rgba(234,229,236,0.5)'}}>{label}</p><p className="text-xl font-semibold">{value}</p></CardContent></Card>)}
+              </div>
+              {importPreview.issues?.length > 0 ? (
+                <Alert className="border-red-500/40 bg-red-500/10">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>Fix these spreadsheet issues before importing</AlertTitle>
+                  <AlertDescription>
+                    <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+                      {importPreview.issues.slice(0, 50).map((issue, index) => <p key={`${issue.row}-${issue.field}-${index}`}>Row {issue.row} · {issue.field}: {issue.message}</p>)}
+                      {importPreview.issues.length > 50 && <p>…and {importPreview.issues.length - 50} more issues</p>}
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Alert className="border-green-500/40 bg-green-500/10"><Check className="h-4 w-4" /><AlertTitle>Ready to import</AlertTitle><AlertDescription>{importFileName} passed validation. Review the preview below, then confirm the import.</AlertDescription></Alert>
+              )}
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader><TableRow><TableHead>Employee ID</TableHead><TableHead>Employee Name</TableHead><TableHead>Company</TableHead><TableHead>Department</TableHead><TableHead>Project</TableHead></TableRow></TableHeader>
+                  <TableBody>{importRows.slice(0, 8).map((row, index) => <TableRow key={`${row['Employee ID']}-${index}`}><TableCell>{row['Employee ID'] || '—'}</TableCell><TableCell>{row['Employee Name'] || '—'}</TableCell><TableCell>{row.Company || '—'}</TableCell><TableCell>{row.Department || '—'}</TableCell><TableCell>{row.Project || '—'}</TableCell></TableRow>)}</TableBody>
+                </Table>
+                {importRows.length > 8 && <p className="p-3 text-xs" style={{color:'rgba(234,229,236,0.5)'}}>Showing 8 of {importRows.length} rows.</p>}
+              </div>
+            </>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportDialogOpen(false)} disabled={importLoading}>Cancel</Button>
+            <Button onClick={confirmEmployeeImport} disabled={importLoading || !importPreview || importPreview.issues?.length > 0} className="bg-[#0d9488] hover:bg-[#0062CC]">{importLoading ? 'Importing…' : 'Confirm Import'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1143,7 +1143,7 @@ export async function GET(request, { params }) {
   }
 
   // ============ EMPLOYEES ============
-  
+
   if (route === 'employees') {
     const filter = {};
     const company_id = url.searchParams.get('company_id');
@@ -2166,7 +2166,169 @@ export async function POST(request, { params }) {
   }
 
   // ============ EMPLOYEES ============
-  
+  if (route === 'employees/import') {
+    if (!['super_admin', 'it_admin'].includes(user.role)) return error('Forbidden', 403);
+
+    const { rows, dry_run = true } = await request.json();
+    if (!Array.isArray(rows) || rows.length === 0) return error('The spreadsheet contains no employee rows');
+    if (rows.length > 5000) return error('A maximum of 5,000 employees can be imported at once');
+
+    const text = value => String(value ?? '').trim();
+    const key = value => text(value).replace(/\s+/g, ' ').toLocaleUpperCase('en');
+    const phoneValue = value => text(value).replace(/\D/g, '');
+    const normalizedRows = rows.map((row, index) => ({
+      row_number: index + 2,
+      company: text(row.Company),
+      department: text(row.Department),
+      name: text(row['Employee Name']),
+      designation: text(row.Designation),
+      manager: text(row.Manager),
+      mobile_number: phoneValue(row['Work Phone']),
+      employee_id: text(row['Employee ID']),
+      project: text(row.Project),
+    }));
+
+    const issues = [];
+    const employeeIdRows = new Map();
+    const phoneRows = new Map();
+    for (const row of normalizedRows) {
+      if (!row.name) issues.push({ row: row.row_number, field: 'Employee Name', message: 'Employee Name is required' });
+      if (!row.employee_id) issues.push({ row: row.row_number, field: 'Employee ID', message: 'Employee ID is required' });
+      const employeeKey = key(row.employee_id);
+      if (employeeKey) {
+        if (employeeIdRows.has(employeeKey)) issues.push({ row: row.row_number, field: 'Employee ID', message: `Duplicate Employee ID also appears on row ${employeeIdRows.get(employeeKey)}` });
+        else employeeIdRows.set(employeeKey, row.row_number);
+      }
+      if (row.mobile_number) {
+        if (phoneRows.has(row.mobile_number)) issues.push({ row: row.row_number, field: 'Work Phone', message: `Duplicate phone number also appears on row ${phoneRows.get(row.mobile_number)}` });
+        else phoneRows.set(row.mobile_number, row.row_number);
+      }
+    }
+
+    const [companies, departments, projects, employees] = await Promise.all([
+      db.collection('companies').find({}).toArray(),
+      db.collection('departments').find({}).toArray(),
+      db.collection('projects').find({}).toArray(),
+      db.collection('employees').find({}).toArray(),
+    ]);
+    const employeesById = new Map(employees.map(employee => [key(employee.employee_id), employee]));
+    const importedIds = new Set(normalizedRows.map(row => key(row.employee_id)).filter(Boolean));
+    const existingPhoneOwners = new Map(employees.filter(employee => employee.mobile_number).map(employee => [phoneValue(employee.mobile_number), employee]));
+    for (const row of normalizedRows) {
+      const owner = row.mobile_number ? existingPhoneOwners.get(row.mobile_number) : null;
+      if (owner && key(owner.employee_id) !== key(row.employee_id) && !importedIds.has(key(owner.employee_id))) {
+        issues.push({ row: row.row_number, field: 'Work Phone', message: `Phone number is already assigned to Employee ID ${owner.employee_id}` });
+      }
+    }
+
+    const companyKeys = new Set(companies.map(item => key(item.name)));
+    const departmentKeys = new Set(departments.map(item => key(item.name)));
+    const projectKeys = new Set(projects.map(item => key(item.name)));
+    const missingCompanies = [...new Set(normalizedRows.map(row => row.company).filter(name => name && !companyKeys.has(key(name))))];
+    const missingDepartments = [...new Set(normalizedRows.map(row => row.department).filter(name => name && !departmentKeys.has(key(name))))];
+    const missingProjects = [...new Set(normalizedRows.map(row => row.project).filter(name => name && !projectKeys.has(key(name))))];
+    const validRows = normalizedRows.filter(row => row.name && row.employee_id);
+    const knownEmployeeNames = new Set([...employees.map(employee => key(employee.name)), ...validRows.map(row => key(row.name))]);
+    const previewUnmatchedManagers = validRows.filter(row => row.manager && !knownEmployeeNames.has(key(row.manager))).length;
+    const summary = {
+      total: normalizedRows.length,
+      create_employees: validRows.filter(row => !employeesById.has(key(row.employee_id))).length,
+      update_employees: validRows.filter(row => employeesById.has(key(row.employee_id))).length,
+      create_companies: missingCompanies.length,
+      create_departments: missingDepartments.length,
+      create_projects: missingProjects.length,
+      unmatched_managers: previewUnmatchedManagers,
+      issues,
+    };
+    if (dry_run || issues.length) return json({ ...summary, imported: false });
+
+    const now = new Date().toISOString();
+    const companyByName = new Map(companies.map(item => [key(item.name), item]));
+    for (const name of missingCompanies) {
+      const item = { id: uuidv4(), name, code: '', name_ar: '', logo: '', created_at: now };
+      await db.collection('companies').insertOne(item);
+      companyByName.set(key(name), item);
+    }
+    const departmentByName = new Map(departments.map(item => [key(item.name), item]));
+    for (const name of missingDepartments) {
+      const item = { id: uuidv4(), name, code: '', created_at: now };
+      await db.collection('departments').insertOne(item);
+      departmentByName.set(key(name), item);
+    }
+    const projectByName = new Map(projects.map(item => [key(item.name), item]));
+    for (const name of missingProjects) {
+      const source = normalizedRows.find(row => key(row.project) === key(name));
+      const company = source?.company ? companyByName.get(key(source.company)) : null;
+      const item = { id: uuidv4(), name, code: '', company_id: company?.id || null, created_at: now };
+      await db.collection('projects').insertOne(item);
+      projectByName.set(key(name), item);
+    }
+
+    // Clear imported phone values first so legitimate number changes/swaps do not hit the unique index mid-import.
+    const existingImportedEmployeeIds = validRows.map(row => employeesById.get(key(row.employee_id))?.id).filter(Boolean);
+    if (existingImportedEmployeeIds.length) {
+      await db.collection('employees').updateMany({ id: { $in: existingImportedEmployeeIds } }, { $set: { mobile_number: '' } });
+    }
+
+    const importedEmployeeByName = new Map();
+    for (const row of validRows) {
+      const existingEmployee = employeesById.get(key(row.employee_id));
+      const company = row.company ? companyByName.get(key(row.company)) : null;
+      const department = row.department ? departmentByName.get(key(row.department)) : null;
+      const project = row.project ? projectByName.get(key(row.project)) : null;
+      const mappedFields = {
+        name: row.name,
+        employee_id: row.employee_id,
+        designation: row.designation,
+        company_id: company?.id || null,
+        department_id: department?.id || null,
+        project_id: project?.id || null,
+        mobile_number: row.mobile_number,
+        updated_at: now,
+      };
+      let employee;
+      if (existingEmployee) {
+        await db.collection('employees').updateOne({ id: existingEmployee.id }, { $set: mappedFields });
+        employee = { ...existingEmployee, ...mappedFields };
+      } else {
+        employee = {
+          id: uuidv4(), ...mappedFields, location_id: null, manager_id: null,
+          status: 'Active', telephone_extension: '', vacation_start_date: null,
+          vacation_end_date: null, personal_email: '', company_email: '',
+          fingerprint_id: '', ad_username: '', keys_provided: false, created_at: now,
+        };
+        await db.collection('employees').insertOne(employee);
+      }
+      employeesById.set(key(row.employee_id), employee);
+      importedEmployeeByName.set(key(row.name), employee);
+    }
+
+    const existingEmployeesByName = new Map(employees.map(employee => [key(employee.name), employee]));
+    let linkedManagers = 0;
+    let unmatchedManagers = 0;
+    for (const row of validRows) {
+      const employee = employeesById.get(key(row.employee_id));
+      const manager = row.manager ? (importedEmployeeByName.get(key(row.manager)) || existingEmployeesByName.get(key(row.manager))) : null;
+      if (row.manager && !manager) unmatchedManagers += 1;
+      if (manager && manager.id !== employee.id) linkedManagers += 1;
+      await db.collection('employees').updateOne(
+        { id: employee.id },
+        { $set: { manager_id: manager && manager.id !== employee.id ? manager.id : null } }
+      );
+    }
+
+    await logAudit(db, user.id, 'IMPORT', 'employees', 'excel', {
+      rows: validRows.length,
+      created: summary.create_employees,
+      updated: summary.update_employees,
+      companies_created: summary.create_companies,
+      departments_created: summary.create_departments,
+      projects_created: summary.create_projects,
+    });
+    return json({ ...summary, imported: true, linked_managers: linkedManagers, unmatched_managers: unmatchedManagers });
+  }
+
+
   if (route === 'employees') {
     if (!canAccess(user.role, 'employees')) return error('Forbidden', 403);
     
