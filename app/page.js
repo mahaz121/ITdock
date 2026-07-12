@@ -1800,7 +1800,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
   };
 
   const openDialog = () => {
-    setFormData({ name: '', employee_id: '', id_number: '', designation: '', company_id: '', project_id: '', location_id: '', department_id: '', manager_id: '', mobile_number: '', status: 'Active' });
+    setFormData({ name: '', employee_id: '', designation: '', company_id: '', project_id: '', location_id: '', department_id: '', manager_id: '', mobile_number: '', status: 'Active' });
     setDialogOpen(true);
   };
 
@@ -2020,7 +2020,6 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
           <div className="grid grid-cols-2 gap-4">
             <div><Label>Name *</Label><Input value={formData.name || ''} onChange={(e) => setFormData({...formData, name: e.target.value})} /></div>
             <div><Label>Employee ID *</Label><Input value={formData.employee_id || ''} onChange={(e) => setFormData({...formData, employee_id: e.target.value})} /></div>
-            <div><Label>ID / Iqama Number</Label><Input value={formData.id_number || ''} onChange={(e) => setFormData({...formData, id_number: e.target.value})} /></div>
             <div><Label>Designation</Label><Input value={formData.designation || ''} onChange={(e) => setFormData({...formData, designation: e.target.value})} /></div>
             <div><Label>Company *</Label>
               <SearchableSelect options={filterOptions.companies || []} value={formData.company_id} onChange={(v) => setFormData({...formData, company_id: v})} placeholder="Select company..." />
