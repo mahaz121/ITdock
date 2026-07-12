@@ -1767,7 +1767,6 @@ function Dashboard({ onNavigate, onNavigateToBills }) {
 // Employees List
 function EmployeesList({ user, onViewEmployee, onCreateEmployee }) {
   const [employees, setEmployees] = useState([]);
-  const [telephoneAssets, setTelephoneAssets] = useState([]);
   const [filterOptions, setFilterOptions] = useState({});
   const [filters, setFilters] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -5021,6 +5020,7 @@ function ExtensionsPage({ user }) {
   const [departments, setDepartments] = useState([]);
   const [locations, setLocations] = useState([]);
   const [employees, setEmployees] = useState([]);
+  const [telephoneAssets, setTelephoneAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterDept, setFilterDept] = useState('');
