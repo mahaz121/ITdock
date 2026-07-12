@@ -3331,18 +3331,6 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
                 <div><Label>Provider Website</Label><Input type="url" placeholder="https://provider.com" value={formData.provider_url || ''} onChange={(e) => setFormData({...formData, provider_url: e.target.value})} /></div>
               </>
             )}
-            <div><Label>Company</Label><SearchableSelect options={filterOptions.companies || []} value={formData.company_id} onChange={(v) => setFormData({...formData, company_id: v})} placeholder="Select..." /></div>
-            {assignmentTarget ? (
-              <>
-                <div><Label>Project</Label><Input value={assignmentTarget.project_name || 'Not assigned'} readOnly disabled title="Inherited from employee" /></div>
-                <div><Label>Location</Label><Input value={assignmentTarget.location_name || 'Not assigned'} readOnly disabled title="Inherited from employee" /></div>
-              </>
-            ) : (
-              <>
-                <div><Label>Project</Label><SearchableSelect options={filterOptions.projects || []} value={formData.project_id} onChange={(v) => setFormData({...formData, project_id: v})} placeholder="Select..." /></div>
-                <div><Label>Location</Label><SearchableSelect options={filterOptions.locations || []} value={formData.location_id} onChange={(v) => setFormData({...formData, location_id: v})} placeholder="Select..." /></div>
-              </>
-            )}
           </div>
           {/* Hardware Specifications — only for hasSpecs categories */}
           {showSpecs && (

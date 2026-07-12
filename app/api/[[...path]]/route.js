@@ -2310,9 +2310,10 @@ export async function POST(request, { params }) {
       status: newStatus,
       assigned_to: employee_id
     };
-    // Employee assignments always inherit the employee's project and location.
+    // Employee assignments always inherit the employee's company, project, and location.
     // Company assignments retain the explicitly supplied values for backwards compatibility.
     if (employeeRecord) {
+      assetUpdates.company_id = employeeRecord.company_id || null;
       assetUpdates.project_id = employeeRecord.project_id || null;
       assetUpdates.location_id = employeeRecord.location_id || null;
     } else {
