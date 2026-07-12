@@ -2180,8 +2180,8 @@ export async function POST(request, { params }) {
       return error('Name and employee_id required');
     }
     
-    if (!company_id || !location_id || !department_id) {
-      return error('Company, Location, and Department are required');
+    if (!company_id || !department_id) {
+      return error('Company and Department are required');
     }
     
     const normalizedEmployeeId = employee_id.trim();
@@ -2211,7 +2211,7 @@ export async function POST(request, { params }) {
       employee_id: normalizedEmployeeId,
       company_id,
       project_id: project_id || null,
-      location_id,
+      location_id: location_id || null,
       department_id,
       manager_id: manager_id || null,
       mobile_number: normalizedMobile,

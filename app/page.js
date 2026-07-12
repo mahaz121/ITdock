@@ -2029,7 +2029,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
             <div><Label>Project *</Label>
               <SearchableSelect options={filterOptions.projects || []} value={formData.project_id} onChange={(v) => setFormData({...formData, project_id: v})} placeholder="Select project..." />
             </div>
-            <div><Label>Location *</Label>
+            <div><Label>Location</Label>
               <SearchableSelect options={filterOptions.locations || []} value={formData.location_id} onChange={(v) => setFormData({...formData, location_id: v})} placeholder="Select location..." />
             </div>
             <div><Label>Department *</Label>
