@@ -437,6 +437,30 @@ async function ensureUniqueIndexes(db) {
   await uniqueIndexPromise;
 }
 
+function deriveCategoryShortName(category) {
+  const configured = String(category?.short_name || category?.code || '').trim();
+  if (configured) return configured.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8);
+
+  const words = String(category?.name || 'AST').trim().split(/\s+/).filter(Boolean);
+  const abbreviation = words.length > 1
+    ? words.map(word => word[0]).join('')
+    : words[0]?.slice(0, 3);
+  return (abbreviation || 'AST').replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8);
+}
+
+async function generateAssetTag(db, category) {
+  const prefix = deriveCategoryShortName(category);
+  while (true) {
+    const counter = await db.collection('counters').findOneAndUpdate(
+      { _id: `asset_tag:${prefix}` },
+      { $inc: { sequence: 1 }, $set: { updated_at: new Date().toISOString() } },
+      { upsert: true, returnDocument: 'after', includeResultMetadata: false }
+    );
+    const tag = `${prefix}-${String(counter.sequence).padStart(6, '0')}`;
+    if (!await db.collection('assets').findOne({ asset_tag: tag })) return tag;
+  }
+}
+
 // Seed default admin and master data
 async function seedAdmin(db) {
   // Only create default admin if NO users exist at all (fresh install)
@@ -2033,7 +2057,7 @@ export async function POST(request, { params }) {
     if (!['super_admin', 'it_admin'].includes(user.role)) return error('Forbidden', 403);
 
     const body = await request.json();
-    const { name, category_type } = body;
+    const { name, category_type, short_name } = body;
 
     if (!name || !category_type) return error('Category name and type required');
     if (!['STORABLE', 'CONSUMABLE', 'SUBSCRIPTION'].includes(category_type)) {
@@ -2046,6 +2070,7 @@ export async function POST(request, { params }) {
     const newCategory = {
       id: uuidv4(),
       name,
+      short_name: String(short_name || '').trim().replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8) || deriveCategoryShortName({ name }),
       category_type,
       hasSpecs: computeHasSpecs(name),
       isIoT: computeIsIoT(name),
@@ -2215,7 +2240,7 @@ export async function POST(request, { params }) {
 
     const body = await request.json();
     const {
-      asset_tag, category, brand, vendor_name,
+      category, brand, vendor_name,
       receive_date, warranty_applicable, warranty_end_date,
       serial_number, connection_type,
       company_id, project_id, location_id, department_id,
@@ -2224,21 +2249,20 @@ export async function POST(request, { params }) {
       specs, ipAddress, ipAddresses
     } = body;
 
-    if (!asset_tag || !category) {
-      return error('Asset tag and category required');
+    if (!category) {
+      return error('Category required');
     }
 
     // Look up category to determine asset_type
     const categoryDoc = await db.collection('categories').findOne({ id: category });
+    if (!categoryDoc) return error('Category not found', 404);
     const categoryType = categoryDoc?.category_type || 'STORABLE';
     const derivedAssetType = categoryType === 'SUBSCRIPTION' ? 'Subscription'
       : categoryType === 'CONSUMABLE' ? 'Consumable'
       : 'Physical';
 
-    const normalizedAssetTag = asset_tag.trim();
+    const normalizedAssetTag = await generateAssetTag(db, categoryDoc);
     const normalizedSerial = serial_number?.trim() || '';
-    const existing = await db.collection('assets').findOne({ asset_tag: normalizedAssetTag }, { collation: { locale: 'en', strength: 2 } });
-    if (existing) return error(`Asset tag "${normalizedAssetTag}" already exists`, 409);
     if (normalizedSerial) {
       const serialDuplicate = await db.collection('assets').findOne({ serial_number: normalizedSerial }, { collation: { locale: 'en', strength: 2 } });
       if (serialDuplicate) return error(`Serial number "${normalizedSerial}" is already used by asset ${serialDuplicate.asset_tag}`, 409);
@@ -2275,8 +2299,8 @@ export async function POST(request, { params }) {
     };
     
     await db.collection('assets').insertOne(newAsset);
-    await logAudit(db, user.id, 'CREATE', 'asset', newAsset.id, { asset_tag, category });
-    await logActivity(db, newAsset.id, 'CREATED', `Asset ${asset_tag} created`, user.id, user.name);
+    await logAudit(db, user.id, 'CREATE', 'asset', newAsset.id, { asset_tag: normalizedAssetTag, category });
+    await logActivity(db, newAsset.id, 'CREATED', `Asset ${normalizedAssetTag} created`, user.id, user.name);
     
     return json(newAsset, 201);
   }
@@ -3553,6 +3577,10 @@ export async function PUT(request, { params }) {
     const updates = { ...body, updated_at: new Date().toISOString() };
     delete updates.id;
     delete updates.created_at;
+    if (body.short_name !== undefined) {
+      updates.short_name = String(body.short_name).trim().replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8)
+        || deriveCategoryShortName({ name: body.name });
+    }
     if (body.name) { updates.hasSpecs = computeHasSpecs(body.name); updates.isIoT = computeIsIoT(body.name); }
 
     await db.collection('categories').updateOne({ id }, { $set: updates });
@@ -3771,13 +3799,8 @@ export async function PUT(request, { params }) {
     
     const asset = await db.collection('assets').findOne({ id: assetId });
     if (!asset) return error('Asset not found', 404);
-    if (body.asset_tag !== undefined) {
-      const assetTagValue = body.asset_tag?.trim();
-      if (!assetTagValue) return error('Asset tag is required');
-      const duplicateTag = await db.collection('assets').findOne({ asset_tag: assetTagValue, id: { $ne: assetId } }, { collation: { locale: 'en', strength: 2 } });
-      if (duplicateTag) return error(`Asset tag "${assetTagValue}" already exists`, 409);
-      body.asset_tag = assetTagValue;
-    }
+    // Asset tags are generated at creation and remain immutable.
+    delete body.asset_tag;
     if (body.serial_number !== undefined) {
       const serialValue = body.serial_number?.trim() || '';
       if (serialValue) {

@@ -2919,7 +2919,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
   };
 
   const openDialog = () => {
-    setFormData({ asset_tag: '', asset_type: 'Physical', category: 'Laptop', brand: '', vendor_name: '', receive_date: '', warranty_applicable: 'N-A', warranty_end_date: '', serial_number: '', connection_type: 'Wired', company_id: '', project_id: assignmentTarget?.project_id || '', location_id: assignmentTarget?.location_id || '', notes: '' });
+    setFormData({ asset_type: 'Physical', category: 'Laptop', brand: '', vendor_name: '', receive_date: '', warranty_applicable: 'N-A', warranty_end_date: '', serial_number: '', connection_type: 'Wired', company_id: '', project_id: assignmentTarget?.project_id || '', location_id: assignmentTarget?.location_id || '', notes: '' });
     setDialogOpen(true);
   };
 
@@ -2975,7 +2975,6 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
   };
 
   const saveAssetInlineEdit = async () => {
-    if (!assetInlineEditData.asset_tag?.trim()) { toast.error('Asset tag is required'); return; }
     try {
       await api.put(`assets/${assetInlineEditId}`, assetInlineEditData);
       toast.success('Asset updated');
@@ -3195,8 +3194,8 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
                       <div className="px-4 py-4" style={{background:'rgba(94,234,212,0.05)', borderTop:'1px solid rgba(94,234,212,0.15)', borderBottom:'1px solid rgba(94,234,212,0.15)'}}>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                           <div>
-                            <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Asset Tag *</label>
-                            <Input className="h-8 text-sm" value={assetInlineEditData.asset_tag || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, asset_tag: e.target.value})} />
+                            <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Asset Tag</label>
+                            <Input className="h-8 text-sm" value={assetInlineEditData.asset_tag || ''} disabled />
                           </div>
                           <div>
                             <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Category</label>
@@ -3265,7 +3264,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
                           <Textarea className="text-sm" rows={2} value={assetInlineEditData.notes || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, notes: e.target.value})} placeholder="Optional notes..." />
                         </div>
                         <div className="flex gap-2 justify-end items-center">
-                          <span className="text-xs mr-2" style={{color:'rgba(234,229,236,0.4)'}}>* Asset tag is required</span>
+                          <span className="text-xs mr-2" style={{color:'rgba(234,229,236,0.4)'}}>Asset tags are generated automatically</span>
                           <Button size="sm" variant="ghost" onClick={cancelAssetInlineEdit} style={{borderColor:'rgba(255,255,255,0.12)'}}>Cancel</Button>
                           <Button size="sm" className="bg-[#0d9488] hover:bg-[#0062CC] text-white" onClick={saveAssetInlineEdit}>Save Changes</Button>
                         </div>
@@ -3284,7 +3283,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add Asset</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-4">
-            <div><Label>Asset Tag *</Label><Input value={formData.asset_tag} onChange={(e) => setFormData({...formData, asset_tag: e.target.value})} /></div>
+            <div><Label>Asset Tag</Label><Input value="Generated automatically from category" disabled /></div>
             <div><Label>Category *</Label>
               <Select value={formData.category} onValueChange={(v) => {
                 const nowSubscription = categories.find(c => c.id === v)?.category_type === 'SUBSCRIPTION';
@@ -4542,7 +4541,7 @@ function MasterDataPage({ user }) {
     } else {
       setEditing(null);
       setFormData(activeTab === 'categories'
-        ? { name: '', category_type: 'STORABLE' }
+        ? { name: '', short_name: '', category_type: 'STORABLE' }
         : activeTab === 'companies' ? { name: '', name_ar: '', code: '', logo: '' } : { name: '', code: '', address: '' });
     }
     setDialogOpen(true);
@@ -4618,6 +4617,7 @@ function MasterDataPage({ user }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Category Name</TableHead>
+                  <TableHead>Short Name</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -4626,6 +4626,7 @@ function MasterDataPage({ user }) {
                 {(data || []).map(item => (
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">{item.name}</TableCell>
+                    <TableCell className="font-mono">{item.short_name || item.code || '-'}</TableCell>
                     <TableCell>
                       <Badge className={
                         item.category_type === 'SUBSCRIPTION'
@@ -4688,7 +4689,9 @@ function MasterDataPage({ user }) {
               <div><Label>Company Logo</Label><Input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => { const file=e.target.files?.[0]; if (!file) return; if (file.size > 1024*1024) return toast.error('Logo must be smaller than 1 MB'); const reader=new FileReader(); reader.onload=()=>setFormData({...formData,logo:reader.result}); reader.readAsDataURL(file); }} />{formData.logo && <img src={formData.logo} alt="Company logo" className="mt-2 h-16 max-w-48 object-contain" />}</div>
             </>}
             {activeTab === 'categories' ? (
-              <div>
+              <div className="space-y-4">
+                <div><Label>Short Name</Label><Input maxLength={8} value={formData.short_name || ''} onChange={(e) => setFormData({...formData, short_name: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')})} placeholder="e.g. LAP" /><p className="text-xs mt-1" style={{color:'rgba(234,229,236,0.45)'}}>Used for automatic asset tags, such as LAP-000001.</p></div>
+                <div>
                 <Label className="block mb-2">Type *</Label>
                 <RadioGroup value={formData.category_type || 'STORABLE'} onValueChange={v => setFormData({...formData, category_type: v})} className="space-y-2">
                   <div className="flex items-center space-x-3 p-3 rounded-lg transition-colors" style={{border:'1px solid rgba(255,255,255,0.08)'}}>
@@ -4706,6 +4709,7 @@ function MasterDataPage({ user }) {
                     </div>
                   </div>
                 </RadioGroup>
+                </div>
               </div>
             ) : activeTab === 'locations' ? (
               <div><Label>Address</Label><Input value={formData.address || ''} onChange={(e) => setFormData({...formData, address: e.target.value})} /></div>
