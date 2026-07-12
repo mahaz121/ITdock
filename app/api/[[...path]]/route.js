@@ -430,7 +430,8 @@ async function ensureUniqueIndexes(db) {
       db.collection('users').createIndex({ email: 1 }, { unique: true, name: 'uniq_user_email', collation: ci }),
       db.collection('users').createIndex({ username: 1 }, { unique: true, name: 'uniq_username', partialFilterExpression: nonEmptyString('username'), collation: ci }),
       db.collection('employees').createIndex({ archived: 1, company_id: 1, project_id: 1, location_id: 1, department_id: 1, name: 1 }, { name: 'employee_list_filters' }),
-      db.collection('assignments').createIndex({ employee_id: 1, unassigned_date: 1 }, { name: 'active_assignments_by_employee' })
+      db.collection('assignments').createIndex({ employee_id: 1, unassigned_date: 1 }, { name: 'active_assignments_by_employee' }),
+      db.collection('extensions').createIndex({ departmentId: 1, locationId: 1, permission: 1, assignedTo: 1 }, { name: 'extension_list_filters' })
     ]).catch(error => {
       console.error('[ITdock indexes] Unique indexes could not be created. Remove existing duplicates, then restart the app.', error);
       // Do not retry every index on every API request. Validation still runs in the
@@ -643,12 +644,36 @@ export async function GET(request, { params }) {
 
   // Extensions — GET list with optional filters
   if (route === 'extensions') {
-    const { dept, location, permission } = Object.fromEntries(url.searchParams);
+    const { dept, location, permission, company_id, search } = Object.fromEntries(url.searchParams);
+    const paginated = url.searchParams.get('paginated') === 'true';
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
     const query = {};
     if (dept) query.departmentId = dept;
     if (location) query.locationId = location;
     if (permission) query.permission = permission;
-    try { return json(await db.collection('extensions').find(query).sort({ extensionNumber: 1 }).toArray()); }
+    if (company_id) {
+      const companyEmployees = await db.collection('employees').find({ company_id }, { projection: { id: 1 } }).toArray();
+      query.assignedTo = { $in: companyEmployees.map(employee => employee.id) };
+    }
+    if (search) {
+      const employeeMatches = await db.collection('employees').find({ name: { $regex: search, $options: 'i' } }, { projection: { id: 1 } }).toArray();
+      query.$or = [
+        { extensionNumber: { $regex: search, $options: 'i' } },
+        { name: { $regex: search, $options: 'i' } },
+        { assignedTo: { $in: employeeMatches.map(employee => employee.id) } },
+      ];
+    }
+    try {
+      const extensionQuery = db.collection('extensions').find(query).sort({ extensionNumber: 1 });
+      if (paginated) extensionQuery.skip((page - 1) * pageSize).limit(pageSize);
+      const [items, total] = await Promise.all([
+        extensionQuery.toArray(),
+        paginated ? db.collection('extensions').countDocuments(query) : Promise.resolve(null),
+      ]);
+      if (paginated) return json({ items, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
+      return json(items);
+    }
     catch { return json([]); }
   }
 
@@ -1330,6 +1355,8 @@ export async function GET(request, { params }) {
     const filter = {};
     const status = url.searchParams.get('status');
     const category = url.searchParams.get('category');
+    const category_name = url.searchParams.get('category_name');
+    const lightweight = url.searchParams.get('lightweight') === 'true';
     const category_type = url.searchParams.get('category_type'); // New: filter by STORABLE/CONSUMABLE/SUBSCRIPTION
     const asset_type = url.searchParams.get('asset_type');
     const company_id = url.searchParams.get('company_id');
@@ -1361,11 +1388,15 @@ export async function GET(request, { params }) {
       ];
     }
     
-    const assets = await db.collection('assets').find(filter).toArray();
-    
     // Get categories to filter by category_type
     const categories = await db.collection('categories').find({}).toArray();
     const categoryMap = Object.fromEntries(categories.map(c => [c.id, c]));
+    if (category_name) {
+      const matchingCategoryIds = categories.filter(item => item.name?.toLowerCase() === category_name.toLowerCase()).map(item => item.id);
+      filter.category = { $in: matchingCategoryIds };
+    }
+    const assetProjection = lightweight ? { id: 1, asset_tag: 1, category: 1, brand: 1, serial_number: 1, status: 1, assigned_to: 1 } : undefined;
+    const assets = await db.collection('assets').find(filter, assetProjection ? { projection: assetProjection } : {}).toArray();
     
     // Filter by category_type if specified
     let filteredAssets = assets;
@@ -1374,6 +1405,9 @@ export async function GET(request, { params }) {
         const cat = categoryMap[a.category];
         return cat && cat.category_type === category_type;
       });
+    }
+    if (lightweight) {
+      return json(filteredAssets.map(asset => ({ ...asset, category_name: categoryMap[asset.category]?.name || asset.category || '' })));
     }
     
     // Get employee names for assigned assets

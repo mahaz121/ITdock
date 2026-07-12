@@ -5453,34 +5453,62 @@ function ExtensionsPage({ user }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [extensionsLoading, setExtensionsLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalExtensions, setTotalExtensions] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
 
   const canEdit = ['super_admin', 'it_admin'].includes(user.role);
   const confirm = useConfirm();
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadReferenceData(); }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+  useEffect(() => { loadExtensions(); }, [currentPage, debouncedSearch, filterCompany, filterDept, filterLoc, filterPerm]);
 
-  const loadAll = async () => {
+  const loadReferenceData = async () => {
     setLoading(true);
     try {
-      const [exts, depts, locs, companiesData, emps, assets] = await Promise.all([
-        api.get('extensions').catch(() => []),
+      const [depts, locs, companiesData, emps, assets] = await Promise.all([
         api.get('departments').catch(() => []),
         api.get('locations').catch(() => []),
         api.get('companies').catch(() => []),
         api.get('employees?lightweight=true').catch(() => []),
-        api.get('assets').catch(() => []),
+        api.get('assets?category_name=IT%20Telephone&lightweight=true').catch(() => []),
       ]);
-      setExtensions(Array.isArray(exts) ? exts : []);
       setDepartments(Array.isArray(depts) ? depts : []);
       setLocations(Array.isArray(locs) ? locs : []);
       setCompanies(Array.isArray(companiesData) ? companiesData : []);
       setEmployees(Array.isArray(emps) ? emps.filter(e => e.status === 'Active') : []);
-      setTelephoneAssets(Array.isArray(assets) ? assets.filter(a => a.category_name === 'IT Telephone') : []);
+      setTelephoneAssets(Array.isArray(assets) ? assets : []);
     } catch (err) {
       console.error('Extensions load error:', err);
       toast.error('Failed to load extensions');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadExtensions = async () => {
+    setExtensionsLoading(true);
+    try {
+      const params = new URLSearchParams({ paginated: 'true', page: String(currentPage), page_size: '40' });
+      if (debouncedSearch) params.set('search', debouncedSearch);
+      if (filterCompany) params.set('company_id', filterCompany);
+      if (filterDept) params.set('dept', filterDept);
+      if (filterLoc) params.set('location', filterLoc);
+      if (filterPerm) params.set('permission', filterPerm);
+      const result = await api.get(`extensions?${params.toString()}`);
+      setExtensions(result.items || []);
+      setTotalExtensions(result.total || 0);
+      setTotalPages(result.total_pages || 1);
+    } catch (err) {
+      toast.error('Failed to load extensions');
+    } finally {
+      setExtensionsLoading(false);
     }
   };
 
@@ -5516,7 +5544,7 @@ function ExtensionsPage({ user }) {
         toast.success('Extension added');
       }
       setDialogOpen(false);
-      loadAll();
+      loadExtensions();
     } catch (err) { toast.error(err.message); }
     setSaving(false);
   };
@@ -5528,14 +5556,14 @@ function ExtensionsPage({ user }) {
     try {
       await api.delete(`extensions/${ext.id}`);
       toast.success('Extension deleted');
-      loadAll();
+      loadExtensions();
     } catch (err) { toast.error(err.message); }
   };
 
   const handleToggleActive = async (ext) => {
     try {
       await api.put(`extensions/${ext.id}`, { ...ext, isActive: !ext.isActive });
-      loadAll();
+      loadExtensions();
     } catch (err) { toast.error(err.message); }
   };
 
@@ -5565,7 +5593,7 @@ function ExtensionsPage({ user }) {
     return true;
   });
 
-  if (loading) return <div className="p-8 text-center" style={{color:'rgba(234,229,236,0.4)'}}>Loading...</div>;
+  if (loading || extensionsLoading) return <div className="p-8"><ITdockPageLoader label="Loading extensions" /></div>;
 
   return (
     <div className="p-8">
@@ -5585,9 +5613,9 @@ function ExtensionsPage({ user }) {
       <div className="flex flex-wrap gap-3 mb-5">
         <div className="relative flex-1 min-w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{color:'rgba(234,229,236,0.4)'}} />
-          <Input placeholder="Search extension or employee..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec'}} />
+          <Input placeholder="Search extension or employee..." value={search} onChange={e => { setSearch(e.target.value); setCurrentPage(1); }} className="pl-9" style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec'}} />
         </div>
-        <Select value={filterCompany || '__all__'} onValueChange={v => setFilterCompany(v === '__all__' ? '' : v)}>
+        <Select value={filterCompany || '__all__'} onValueChange={v => { setFilterCompany(v === '__all__' ? '' : v); setCurrentPage(1); }}>
           <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'170px'}}>
             <SelectValue placeholder="All Companies" />
           </SelectTrigger>
@@ -5596,7 +5624,7 @@ function ExtensionsPage({ user }) {
             {companies.map(company => <SelectItem key={company.id} value={company.id}>{company.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={filterDept || '__all__'} onValueChange={v => setFilterDept(v === '__all__' ? '' : v)}>
+        <Select value={filterDept || '__all__'} onValueChange={v => { setFilterDept(v === '__all__' ? '' : v); setCurrentPage(1); }}>
           <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'160px'}}>
             <SelectValue placeholder="All Departments" />
           </SelectTrigger>
@@ -5605,7 +5633,7 @@ function ExtensionsPage({ user }) {
             {departments.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={filterLoc || '__all__'} onValueChange={v => setFilterLoc(v === '__all__' ? '' : v)}>
+        <Select value={filterLoc || '__all__'} onValueChange={v => { setFilterLoc(v === '__all__' ? '' : v); setCurrentPage(1); }}>
           <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'150px'}}>
             <SelectValue placeholder="All Locations" />
           </SelectTrigger>
@@ -5614,7 +5642,7 @@ function ExtensionsPage({ user }) {
             {locations.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={filterPerm || '__all__'} onValueChange={v => setFilterPerm(v === '__all__' ? '' : v)}>
+        <Select value={filterPerm || '__all__'} onValueChange={v => { setFilterPerm(v === '__all__' ? '' : v); setCurrentPage(1); }}>
           <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'160px'}}>
             <SelectValue placeholder="All Permissions" />
           </SelectTrigger>
@@ -5626,7 +5654,7 @@ function ExtensionsPage({ user }) {
           </SelectContent>
         </Select>
         {(search || filterCompany || filterDept || filterLoc || filterPerm) && (
-          <Button variant="ghost" size="sm" onClick={() => { setSearch(''); setFilterCompany(''); setFilterDept(''); setFilterLoc(''); setFilterPerm(''); }} style={{color:'rgba(234,229,236,0.5)'}}>
+          <Button variant="ghost" size="sm" onClick={() => { setSearch(''); setFilterCompany(''); setFilterDept(''); setFilterLoc(''); setFilterPerm(''); setCurrentPage(1); }} style={{color:'rgba(234,229,236,0.5)'}}>
             <X className="h-4 w-4 mr-1" />Clear
           </Button>
         )}
@@ -5707,6 +5735,15 @@ function ExtensionsPage({ user }) {
           </TableBody>
         </Table>
       </Card>
+
+      <div className="flex items-center justify-between mt-4">
+        <p className="text-sm" style={{color:'rgba(234,229,236,0.55)'}}>{totalExtensions === 0 ? 'No extensions' : `Showing ${(currentPage - 1) * 40 + 1}-${Math.min(currentPage * 40, totalExtensions)} of ${totalExtensions}`}</p>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}><ChevronLeft className="h-4 w-4 mr-1" />Previous</Button>
+          <span className="text-sm px-2">Page {currentPage} of {totalPages}</span>
+          <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
+        </div>
+      </div>
 
       {/* Add / Edit Modal */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
