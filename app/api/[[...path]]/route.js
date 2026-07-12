@@ -428,10 +428,14 @@ async function ensureUniqueIndexes(db) {
       db.collection('employees').createIndex({ company_email: 1 }, { unique: true, name: 'uniq_employee_work_email', partialFilterExpression: nonEmptyString('company_email'), collation: ci }),
       db.collection('extensions').createIndex({ extensionNumber: 1 }, { unique: true, name: 'uniq_extension_number', collation: ci }),
       db.collection('users').createIndex({ email: 1 }, { unique: true, name: 'uniq_user_email', collation: ci }),
-      db.collection('users').createIndex({ username: 1 }, { unique: true, name: 'uniq_username', partialFilterExpression: nonEmptyString('username'), collation: ci })
+      db.collection('users').createIndex({ username: 1 }, { unique: true, name: 'uniq_username', partialFilterExpression: nonEmptyString('username'), collation: ci }),
+      db.collection('employees').createIndex({ archived: 1, company_id: 1, project_id: 1, location_id: 1, department_id: 1, name: 1 }, { name: 'employee_list_filters' }),
+      db.collection('assignments').createIndex({ employee_id: 1, unassigned_date: 1 }, { name: 'active_assignments_by_employee' })
     ]).catch(error => {
-      uniqueIndexPromise = null;
       console.error('[ITdock indexes] Unique indexes could not be created. Remove existing duplicates, then restart the app.', error);
+      // Do not retry every index on every API request. Validation still runs in the
+      // create/update endpoints, and indexes will be attempted again after restart.
+      return false;
     });
   }
   await uniqueIndexPromise;
@@ -1131,7 +1135,7 @@ export async function GET(request, { params }) {
     const projects = await db.collection('projects').find({}).toArray();
     const locations = await db.collection('locations').find({}).toArray();
     const departments = await db.collection('departments').find({}).toArray();
-    const employees = await db.collection('employees').find({}).toArray();
+    const employees = await db.collection('employees').find({}, { projection: { id: 1, name: 1 } }).toArray();
     
     return json({ 
       companies: companies.map(c => ({ id: c.id, name: c.name })),
@@ -1146,6 +1150,9 @@ export async function GET(request, { params }) {
 
   if (route === 'employees') {
     const filter = {};
+    const paginated = url.searchParams.get('paginated') === 'true';
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '50', 10) || 50));
     const company_id = url.searchParams.get('company_id');
     const project_id = url.searchParams.get('project_id');
     const location_id = url.searchParams.get('location_id');
@@ -1174,14 +1181,18 @@ export async function GET(request, { params }) {
       ];
     }
     
-    const employees = await db.collection('employees').find(filter).toArray();
+    const employeeQuery = db.collection('employees').find(filter).sort({ name: 1 });
+    if (paginated) employeeQuery.skip((page - 1) * pageSize).limit(pageSize);
+    const [employees, total] = await Promise.all([
+      employeeQuery.toArray(),
+      paginated ? db.collection('employees').countDocuments(filter) : Promise.resolve(null),
+    ]);
     
     // Get asset count for each employee
     const employeeIds = employees.map(e => e.id);
-    const assignments = await db.collection('assignments').find({
-      employee_id: { $in: employeeIds },
-      unassigned_date: null
-    }).toArray();
+    const assignments = employeeIds.length ? await db.collection('assignments').find({
+      employee_id: { $in: employeeIds }, unassigned_date: null
+    }, { projection: { employee_id: 1 } }).toArray() : [];
     
     const assetCounts = {};
     assignments.forEach(a => {
@@ -1189,16 +1200,20 @@ export async function GET(request, { params }) {
     });
     
     // Enrich with master data names
-    const companies = await db.collection('companies').find({}).toArray();
-    const projects = await db.collection('projects').find({}).toArray();
-    const locations = await db.collection('locations').find({}).toArray();
-    const departments = await db.collection('departments').find({}).toArray();
+    const managerIds = [...new Set(employees.map(employee => employee.manager_id).filter(Boolean))];
+    const [companies, projects, locations, departments, managers] = await Promise.all([
+      db.collection('companies').find({}, { projection: { id: 1, name: 1 } }).toArray(),
+      db.collection('projects').find({}, { projection: { id: 1, name: 1 } }).toArray(),
+      db.collection('locations').find({}, { projection: { id: 1, name: 1 } }).toArray(),
+      db.collection('departments').find({}, { projection: { id: 1, name: 1 } }).toArray(),
+      managerIds.length ? db.collection('employees').find({ id: { $in: managerIds } }, { projection: { id: 1, name: 1 } }).toArray() : [],
+    ]);
     
     const companyMap = Object.fromEntries(companies.map(c => [c.id, c.name]));
     const projectMap = Object.fromEntries(projects.map(p => [p.id, p.name]));
     const locationMap = Object.fromEntries(locations.map(l => [l.id, l.name]));
     const departmentMap = Object.fromEntries(departments.map(d => [d.id, d.name]));
-    const employeeMap = Object.fromEntries(employees.map(e => [e.id, e.name]));
+    const employeeMap = Object.fromEntries(managers.map(e => [e.id, e.name]));
     
     const enrichedEmployees = employees.map(e => ({
       ...e,
@@ -1210,6 +1225,15 @@ export async function GET(request, { params }) {
       manager_name: employeeMap[e.manager_id] || ''
     }));
     
+    if (paginated) {
+      return json({
+        items: enrichedEmployees,
+        total,
+        page,
+        page_size: pageSize,
+        total_pages: Math.max(1, Math.ceil(total / pageSize)),
+      });
+    }
     return json(enrichedEmployees);
   }
 

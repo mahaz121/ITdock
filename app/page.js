@@ -26,7 +26,7 @@ import {
   Plus, Pencil, LogOut, Settings, Settings2, Download, Eye, EyeOff, Upload, UserX,
   Database, Laptop, Monitor, Keyboard, Mouse, HardDrive, Cable, Cloud, MapPin, Briefcase,
   Check, ChevronsUpDown, ArrowLeft, Clock, Server, Printer, Search, SlidersHorizontal, X,
-  Bell, AlertTriangle, RefreshCw, Calendar, Link2, Mail, ChevronDown, ChevronUp,
+  Bell, AlertTriangle, RefreshCw, Calendar, Link2, Mail, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
   Shield, ShieldCheck, ShieldOff, KeyRound, Info, ExternalLink, CreditCard, FolderOpen,
   Plane, ClipboardList, Copy, UserPlus, UserMinus, Phone, Cpu, Wifi,
   PlusCircle, XCircle, Github, Star, Heart, Coffee, Layers, Zap, Globe
@@ -1784,24 +1784,40 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
   const [importPreview, setImportPreview] = useState(null);
   const [importFileName, setImportFileName] = useState('');
   const [importLoading, setImportLoading] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalEmployees, setTotalEmployees] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const confirm = useConfirm();
 
   const canEdit = ['super_admin', 'it_admin'].includes(user.role);
 
-  useEffect(() => { loadData(); }, [filters, searchTerm, showArchived]);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearchTerm(searchTerm), 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => { loadFilterOptions(); }, []);
+  useEffect(() => { loadData(); }, [filters, debouncedSearchTerm, showArchived, currentPage]);
+
+  const loadFilterOptions = async () => {
+    try { setFilterOptions(await api.get('filters')); }
+    catch (err) { console.error('Failed to load employee filters', err); }
+  };
 
   const loadData = async () => {
     try {
       const params = new URLSearchParams();
       Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
-      if (searchTerm) params.set('search', searchTerm);
+      if (debouncedSearchTerm) params.set('search', debouncedSearchTerm);
       if (showArchived) params.set('archived', 'true');
-      const [emps, opts] = await Promise.all([
-        api.get(`employees?${params.toString()}`),
-        api.get('filters')
-      ]);
-      setEmployees(emps);
-      setFilterOptions(opts);
+      params.set('paginated', 'true');
+      params.set('page', String(currentPage));
+      params.set('page_size', '50');
+      const emps = await api.get(`employees?${params.toString()}`);
+      setEmployees(emps.items || []);
+      setTotalEmployees(emps.total || 0);
+      setTotalPages(emps.total_pages || 1);
     } catch (err) { toast.error('Failed to load employees'); }
   };
 
@@ -1815,6 +1831,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
       await api.post('employees', formData);
       toast.success('Employee created');
       setDialogOpen(false);
+      loadFilterOptions();
       loadData();
     } catch (err) { toast.error(err.message); }
   };
@@ -1876,8 +1893,14 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
     return 'bg-[rgba(255,255,255,0.06)] text-[#eae5ec] border border-white/10';
   };
 
-  const exportEmployees = () => {
-    const rows = employees.map(e => ({
+  const exportEmployees = async () => {
+    try {
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+      if (debouncedSearchTerm) params.set('search', debouncedSearchTerm);
+      if (showArchived) params.set('archived', 'true');
+      const exportData = await api.get(`employees?${params.toString()}`);
+      const rows = exportData.map(e => ({
       'Name': e.name || '',
       'Employee ID': e.employee_id || '',
       'Position': e.position || '',
@@ -1889,9 +1912,10 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
       'Project': e.project_name || '',
       'Status': e.status || '',
       'Assets': e.asset_count || 0,
-    }));
-    downloadXlsx(rows, 'Employees', `mahaz_employees_${new Date().toISOString().slice(0,10)}.xlsx`);
-    toast.success('Excel file downloaded');
+      }));
+      downloadXlsx(rows, 'Employees', `mahaz_employees_${new Date().toISOString().slice(0,10)}.xlsx`);
+      toast.success('Excel file downloaded');
+    } catch (err) { toast.error(err.message); }
   };
 
   const resetEmployeeImport = () => {
@@ -1940,6 +1964,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
       toast.success(`Imported ${result.total} employees: ${result.create_employees} created, ${result.update_employees} updated`);
       setImportDialogOpen(false);
       resetEmployeeImport();
+      loadFilterOptions();
       loadData();
     } catch (err) { toast.error(err.message); }
     finally { setImportLoading(false); }
@@ -1952,10 +1977,10 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
         <div className="flex items-center space-x-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#AEAEB2]" />
-            <Input placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 w-64" />
+            <Input placeholder="Search..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} className="pl-10 w-64" />
           </div>
           <div className="flex items-center space-x-2 border rounded-md px-3 py-2">
-            <Checkbox id="archived-emp" checked={showArchived} onCheckedChange={setShowArchived} />
+            <Checkbox id="archived-emp" checked={showArchived} onCheckedChange={(checked) => { setShowArchived(checked); setCurrentPage(1); }} />
             <label htmlFor="archived-emp" className="text-sm text-[#1D1D1F] cursor-pointer">Show Archived</label>
           </div>
           <Button onClick={exportEmployees} variant="outline" size="sm"><Download className="h-4 w-4 mr-2" />Export</Button>
@@ -1964,7 +1989,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
         </div>
       </div>
 
-      <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(k, v) => setFilters({...filters, [k]: v})} onClear={() => setFilters({})} />
+      <FilterBar filters={filters} filterOptions={filterOptions} onFilterChange={(k, v) => { setFilters({...filters, [k]: v}); setCurrentPage(1); }} onClear={() => { setFilters({}); setCurrentPage(1); }} />
 
       <Card>
         <Table>
@@ -2054,7 +2079,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
                           </div>
                           <div>
                             <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Manager</label>
-                            <SearchableSelect options={employees.filter(e => e.id !== emp.id).map(e => ({id: e.id, name: e.name}))} value={inlineEditData.manager_id} onChange={v => setInlineEditData({...inlineEditData, manager_id: v})} placeholder="Select..." />
+                            <SearchableSelect options={(filterOptions.managers || []).filter(manager => manager.id !== emp.id)} value={inlineEditData.manager_id} onChange={v => setInlineEditData({...inlineEditData, manager_id: v})} placeholder="Select..." />
                           </div>
                         </div>
                         <div className="flex gap-2 justify-end items-center">
@@ -2071,6 +2096,17 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
           </TableBody>
         </Table>
       </Card>
+
+      <div className="flex items-center justify-between mt-4">
+        <p className="text-sm" style={{color:'rgba(234,229,236,0.55)'}}>
+          {totalEmployees === 0 ? 'No employees' : `Showing ${(currentPage - 1) * 50 + 1}-${Math.min(currentPage * 50, totalEmployees)} of ${totalEmployees}`}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}><ChevronLeft className="h-4 w-4 mr-1" />Previous</Button>
+          <span className="text-sm px-2">Page {currentPage} of {totalPages}</span>
+          <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
+        </div>
+      </div>
 
       {/* Add Employee Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -2093,7 +2129,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
               <SearchableSelect options={filterOptions.departments || []} value={formData.department_id} onChange={(v) => setFormData({...formData, department_id: v})} placeholder="Select department..." />
             </div>
             <div><Label>Manager</Label>
-              <SearchableSelect options={employees.map(e => ({ id: e.id, name: e.name }))} value={formData.manager_id} onChange={(v) => setFormData({...formData, manager_id: v})} placeholder="Select manager..." />
+              <SearchableSelect options={filterOptions.managers || []} value={formData.manager_id} onChange={(v) => setFormData({...formData, manager_id: v})} placeholder="Select manager..." />
             </div>
             <div><Label>Mobile Number</Label><Input value={formData.mobile_number || ''} onChange={(e) => setFormData({...formData, mobile_number: e.target.value})} /></div>
             <div><Label>Status</Label>
