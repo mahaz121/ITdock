@@ -310,16 +310,16 @@ button, a, input, select, textarea {
 
 /* ========== LIGHT-BACKGROUND COMPAT (dark theme) ========== */
 /* bg-[#F5F5F7] elements inherit white text from body — fix with subtle dark bg */
-.bg-\[#F5F5F7\] {
+.bg-\[\#F5F5F7\] {
   background: rgba(255,255,255,0.04) !important;
   color: #eae5ec !important;
 }
 
 /* Explicit dark-on-light overrides for any remaining light panels */
-.text-\[#1D1D1F\] { color: #eae5ec !important; }
-.text-\[#3A3A3C\] { color: rgba(234,229,236,0.8) !important; }
-.text-\[#6E6E73\] { color: rgba(234,229,236,0.55) !important; }
-.text-\[#AEAEB2\] { color: rgba(234,229,236,0.4) !important; }
+.text-\[\#1D1D1F\] { color: #eae5ec !important; }
+.text-\[\#3A3A3C\] { color: rgba(234,229,236,0.8) !important; }
+.text-\[\#6E6E73\] { color: rgba(234,229,236,0.55) !important; }
+.text-\[\#AEAEB2\] { color: rgba(234,229,236,0.4) !important; }
 
 /* Inputs, selects, textareas — always dark text on any background */
 input, select, textarea {

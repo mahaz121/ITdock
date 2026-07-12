@@ -860,10 +860,10 @@ function NotificationBell({ onNotificationClick }) {
   };
 
   const iconBg = (n) => {
-    if (n.priority === 'high') return '#FEEAEA';
-    if (n.type === 'renewal_approaching') return '#FFF0E0';
+    if (n.priority === 'high') return 'rgba(248,113,113,0.10)';
+    if (n.type === 'renewal_approaching') return 'rgba(251,146,60,0.10)';
     if (n.type === 'maintenance_pending') return 'rgba(94,234,212,0.10)';
-    return '#FFF0E0';
+    return 'rgba(251,146,60,0.10)';
   };
 
   return (
@@ -884,7 +884,7 @@ function NotificationBell({ onNotificationClick }) {
         <div className="p-3 flex items-center justify-between" style={{borderBottom: '1px solid rgba(255,255,255,0.06)'}}>
           <h3 className="font-semibold text-sm" style={{color:'#eae5ec'}}>Notifications</h3>
           {hasCritical && (
-            <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{background:'#FEEAEA', color:'#FF3B30', border:'1px solid rgba(255,59,48,0.2)'}}>
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{background:'rgba(248,113,113,0.12)', color:'#f87171', border:'1px solid rgba(248,113,113,0.2)'}}>
               {criticalCount} CRITICAL
             </span>
           )}
@@ -912,7 +912,7 @@ function NotificationBell({ onNotificationClick }) {
                           <p className="text-sm font-medium truncate" style={{color:'#eae5ec'}}>{notifLabel(n)}</p>
                           {dl && (
                             <span className="text-xs font-bold flex-shrink-0 px-1.5 py-0.5 rounded" style={{
-                              background: isCrit ? '#FEEAEA' : '#FFF0E0',
+                              background: isCrit ? 'rgba(248,113,113,0.12)' : 'rgba(251,146,60,0.12)',
                               color: isCrit ? '#FF3B30' : '#FF9500'
                             }}>{dl}</span>
                           )}
@@ -1016,7 +1016,7 @@ function ForcePasswordChangeModal({ onPasswordChanged }) {
     <div className="fixed inset-0 z-[9998] flex items-center justify-center" style={{background:'rgba(0,0,0,0.5)', backdropFilter:'blur(6px)'}}>
       <div className="w-full max-w-md rounded-[18px] p-8" style={{background:'#050810', border:'1px solid rgba(255,149,0,0.25)', boxShadow:'0 8px 48px rgba(0,0,0,0.48)'}}>
         <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{background:'#FFF0E0', border:'1px solid rgba(255,149,0,0.2)'}}>
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{background:'rgba(251,146,60,0.12)', border:'1px solid rgba(251,146,60,0.2)'}}>
             <KeyRound className="h-5 w-5" style={{color:'#FF9500'}} />
           </div>
           <div>
@@ -1033,7 +1033,7 @@ function ForcePasswordChangeModal({ onPasswordChanged }) {
             {next && (
               <div className="mt-2">
                 <div className="flex gap-1 mb-1">{[1,2,3,4,5].map(i => (
-                  <div key={i} className="h-1 flex-1 rounded-full transition-all" style={{background: i <= strength.score ? strength.color : '#E8E8ED'}} />
+                  <div key={i} className="h-1 flex-1 rounded-full transition-all" style={{background: i <= strength.score ? strength.color : 'rgba(255,255,255,0.10)'}} />
                 ))}</div>
                 <p className="text-xs" style={{color: strength.color}}>{strength.label}</p>
               </div>
@@ -1288,7 +1288,7 @@ function SecurityDialog({ open, onOpenChange, onLogout }) {
               {cpNew && (
                 <div className="mt-2">
                   <div className="flex gap-1 mb-1">{[1,2,3,4,5].map(i => (
-                    <div key={i} className="h-1 flex-1 rounded-full transition-all" style={{background: i <= cpStrength.score ? cpStrength.color : '#E8E8ED'}} />
+                    <div key={i} className="h-1 flex-1 rounded-full transition-all" style={{background: i <= cpStrength.score ? cpStrength.color : 'rgba(255,255,255,0.10)'}} />
                   ))}</div>
                   <p className="text-xs" style={{color: cpStrength.color}}>{cpStrength.label}</p>
                 </div>
@@ -1305,7 +1305,7 @@ function SecurityDialog({ open, onOpenChange, onLogout }) {
           <TabsContent value="apikeys" className="pt-4 space-y-4">
             {/* Created key reveal — shown once */}
             {createdKey && (
-              <div className="p-4 rounded-xl space-y-3" style={{background:'#E6F7EE', border:'1px solid rgba(52,199,89,0.25)'}}>
+              <div className="p-4 rounded-xl space-y-3" style={{background:'rgba(52,199,89,0.08)', border:'1px solid rgba(52,199,89,0.25)'}}>
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-semibold" style={{color:'#1B8043'}}>Key created — copy now, it won't be shown again</p>
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" style={{color: keyCopied ? '#34C759' : '#0d9488'}} onClick={() => copyKey(createdKey.key)}>
@@ -1854,7 +1854,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee }) {
     if (s === 'Active') return 'bg-green-100 text-green-800';
     if (s === 'On Vacation') return 'bg-orange-100 text-orange-800';
     if (s === 'Resigned') return 'bg-red-100 text-red-800';
-    return 'bg-[#F5F5F7] text-gray-800';
+    return 'bg-[rgba(255,255,255,0.06)] text-[#eae5ec] border border-white/10';
   };
 
   const exportEmployees = () => {
@@ -2948,7 +2948,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter }) {
 
   const getStatusColor = (s) => {
     const colors = { 'In Stock': 'bg-green-100 text-green-800', 'Assigned': 'bg-blue-100 text-blue-800', 'Temporarily Assigned': 'bg-purple-100 text-purple-800', 'Handed Over (Vacation Coverage)': 'bg-orange-100 text-orange-800', 'In Maintenance': 'bg-yellow-100 text-yellow-800', 'Scrapped': 'bg-red-100 text-red-800' };
-    return colors[s] || 'bg-[#F5F5F7] text-gray-800';
+    return colors[s] || 'bg-[rgba(255,255,255,0.06)] text-[#eae5ec] border border-white/10';
   };
 
   // Fix: look up category by ID, not by hardcoded name
@@ -3631,7 +3631,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
           <CardHeader className="flex flex-row items-center justify-between">
             <div><CardTitle>{asset.asset_tag}</CardTitle><CardDescription>{asset.category_name || asset.category} - {asset.asset_type}</CardDescription></div>
             <div className="flex space-x-2">
-              <Badge className={asset.status === 'In Stock' ? 'bg-green-100 text-green-800' : asset.status === 'Assigned' ? 'bg-blue-100 text-blue-800' : 'bg-[#F5F5F7]'}>{asset.status}</Badge>
+              <Badge className={asset.status === 'In Stock' ? 'bg-green-100 text-green-800' : asset.status === 'Assigned' ? 'bg-blue-100 text-blue-800' : 'bg-[rgba(255,255,255,0.06)] text-[#eae5ec] border border-white/10'}>{asset.status}</Badge>
               {asset.asset_type === 'Physical' && <Badge variant="outline" className={asset.warranty_status === 'Active' ? 'text-green-600' : 'text-red-600'}>Warranty: {asset.warranty_status}</Badge>}
             </div>
           </CardHeader>
@@ -3902,7 +3902,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
                   {maintenanceRecords.map(record => {
                     const totalCost = (parseFloat(record.maintenance_cost) || 0) + (parseFloat(record.technician_cost) || 0);
                     return (
-                      <div key={record.id} className="p-3 border rounded-lg bg-[#F5F5F7]">
+                      <div key={record.id} className="p-3 border rounded-lg" style={{background:'rgba(255,255,255,0.035)', borderColor:'rgba(255,255,255,0.08)'}}>
                         <div className="flex justify-between items-start mb-2">
                           <div>
                             <p className="font-medium text-sm">{record.date}</p>
@@ -5922,7 +5922,7 @@ function AuditLogPage({ user, embedded }) {
     if (['ASSIGN'].some(a => action.includes(a))) return 'bg-purple-100 text-purple-800';
     if (['SCRAP'].some(a => action.includes(a))) return 'bg-orange-100 text-orange-800';
     if (['UPLOAD'].some(a => action.includes(a))) return 'bg-blue-50 text-blue-700';
-    return 'bg-[#F5F5F7] text-gray-800';
+    return 'bg-[rgba(255,255,255,0.06)] text-[#eae5ec] border border-white/10';
   };
 
   const formatDetails = (details) => {
@@ -6124,8 +6124,8 @@ function UsersPage({ currentUser }) {
   };
 
   const getRoleColor = (r) => {
-    const colors = { admin: 'bg-red-100 text-red-800', asset_manager: 'bg-blue-100 text-blue-800', it_support: 'bg-green-100 text-green-800', ordinary: 'bg-[#F5F5F7] text-gray-800' };
-    return colors[r] || 'bg-[#F5F5F7] text-gray-800';
+    const colors = { admin: 'bg-red-100 text-red-800', asset_manager: 'bg-blue-100 text-blue-800', it_support: 'bg-green-100 text-green-800', ordinary: 'bg-[rgba(255,255,255,0.06)] text-[#eae5ec] border border-white/10' };
+    return colors[r] || 'bg-[rgba(255,255,255,0.06)] text-[#eae5ec] border border-white/10';
   };
 
   return (
