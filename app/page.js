@@ -5034,6 +5034,8 @@ function MaintenancePage({ user }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalRecords, setTotalRecords] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const [referencesLoading, setReferencesLoading] = useState(true);
+  const [recordsLoading, setRecordsLoading] = useState(true);
 
   const canCreate = ['super_admin', 'it_admin', 'it_technician'].includes(user.role);
 
@@ -5044,6 +5046,7 @@ function MaintenancePage({ user }) {
   useEffect(() => { loadRecords(); }, [currentPage]);
 
   const loadReferences = async () => {
+    setReferencesLoading(true);
     try {
       const [ass, emps] = await Promise.all([
         api.get('assets?lightweight=true'),
@@ -5052,13 +5055,16 @@ function MaintenancePage({ user }) {
       setAssets(ass);
       setEmployees(emps);
     } catch (err) { toast.error('Failed to load data'); }
+    finally { setReferencesLoading(false); }
   };
 
   const loadRecords = async () => {
+    setRecordsLoading(true);
     try {
       const result = await api.get(`maintenance?paginated=true&page=${currentPage}&page_size=40`);
       setRecords(result.items || []); setTotalRecords(result.total || 0); setTotalPages(result.total_pages || 1);
     } catch (err) { toast.error('Failed to load maintenance records'); }
+    finally { setRecordsLoading(false); }
   };
 
   const openDialog = () => {
@@ -5160,6 +5166,8 @@ function MaintenancePage({ user }) {
   }));
 
   const employeeOptions = employees.map(e => ({ id: e.id, name: e.name }));
+
+  if (referencesLoading || recordsLoading) return <div className="p-8"><ITdockPageLoader label="Loading maintenance" /></div>;
 
   return (
     <div className="p-8">
