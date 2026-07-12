@@ -20,6 +20,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
+import QRCode from 'qrcode';
 import {
   LayoutDashboard, Users, Package, Wrench, Trash2, FileText, Building2,
   Plus, Pencil, LogOut, Settings, Settings2, Download, Eye, EyeOff, Upload, UserX,
@@ -631,7 +632,7 @@ function MahazLandingPage({ onLogin }) {
           <DialogHeader>
             <div className="flex items-center gap-3 mb-1">
               <div className="w-9 h-9 rounded-xl bg-[#0d9488] flex items-center justify-center" style={{boxShadow:'0 0 14px rgba(94,234,212,0.3)'}}>
-                {totpSession ? <KeyRound className="h-5 w-5 text-white" /> : <Monitor className="h-5 w-5 text-white" />}
+                {totpSession ? <KeyRound className="h-5 w-5 text-white" /> : <img src="/logo.png" alt="ITdock logo" className="h-7 w-7 object-contain" />}
               </div>
               <DialogTitle style={{color:'#eae5ec'}}>{totpSession ? 'Two-Factor Auth' : 'Sign in to ITdock'}</DialogTitle>
             </div>
@@ -654,6 +655,7 @@ function MahazLandingPage({ onLogin }) {
               <Button type="submit" className="w-full" disabled={loginLoading} style={{background:'#0d9488', color:'#fff'}}>
                 {loginLoading ? 'Signing in…' : 'Sign In'}
               </Button>
+              <a href="/forgot-password" className="block text-center text-xs hover:underline" style={{color:'rgba(234,229,236,0.5)'}}>Forgot password?</a>
             </form>
           ) : (
             <form onSubmit={handleTotpLogin} className="space-y-4 mt-2">
@@ -725,7 +727,7 @@ function LoginPage({ onLogin, onBack }) {
       <div className="w-full max-w-sm" style={{animation:'loginFadeIn 0.25s ease'}}>
         <div className="text-center mb-6">
           <div className="w-14 h-14 rounded-2xl bg-[#0d9488] mx-auto mb-3 flex items-center justify-center" style={{boxShadow:'0 4px 16px rgba(94,234,212,0.25)'}}>
-            {totpSession ? <KeyRound className="h-7 w-7 text-white" /> : <Monitor className="h-7 w-7 text-white" />}
+            {totpSession ? <KeyRound className="h-7 w-7 text-white" /> : <img src="/logo.png" alt="ITdock logo" className="h-10 w-10 object-contain" />}
           </div>
           <h1 className="text-2xl font-bold" style={{color:'#eae5ec'}}>ITdock</h1>
           <p className="text-sm mt-1" style={{color:'rgba(234,229,236,0.6)'}}>{totpSession ? 'Two-Factor Authentication' : 'Sign in to your account'}</p>
@@ -746,10 +748,9 @@ function LoginPage({ onLogin, onBack }) {
                 {loading ? 'Signing in...' : 'Sign In'}
               </button>
               <p className="text-center text-xs mt-1">
-                <button type="button" className="hover:underline" style={{color:'rgba(234,229,236,0.4)'}}
-                  onClick={() => toast.info('Contact your administrator to reset your password.')}>
+                <a href="/forgot-password" className="hover:underline" style={{color:'rgba(234,229,236,0.4)'}}>
                   Forgot password?
-                </button>
+                </a>
               </p>
             </form>
           ) : (
@@ -1059,6 +1060,7 @@ function SecurityDialog({ open, onOpenChange, onLogout }) {
   const [step, setStep] = useState('idle');
   const [secret, setSecret] = useState('');
   const [otpauthUrl, setOtpauthUrl] = useState('');
+  const [qrDataUrl, setQrDataUrl] = useState('');
   const [code, setCode] = useState('');
   const [disablePassword, setDisablePassword] = useState('');
   // Sessions state
@@ -1149,7 +1151,11 @@ function SecurityDialog({ open, onOpenChange, onLogout }) {
 
   const startSetup = async () => {
     setLoading(true);
-    try { const d = await api.post('auth/totp/setup', {}); setSecret(d.secret); setOtpauthUrl(d.otpauth_url); setStep('setup'); }
+    try {
+      const d = await api.post('auth/totp/setup', {});
+      const qr = await QRCode.toDataURL(d.otpauth_url, { width: 220, margin: 2, color: { dark: '#050810', light: '#ffffff' } });
+      setSecret(d.secret); setOtpauthUrl(d.otpauth_url); setQrDataUrl(qr); setStep('setup');
+    }
     catch (err) { toast.error(err.message); }
     finally { setLoading(false); }
   };
@@ -1218,6 +1224,13 @@ function SecurityDialog({ open, onOpenChange, onLogout }) {
             </>)}
             {step === 'setup' && (<>
               <p className="text-sm" style={{color:'rgba(234,229,236,0.6)'}}>Add this to Google Authenticator, Authy, or any TOTP app.</p>
+              {qrDataUrl && (
+                <div className="flex justify-center">
+                  <div className="p-3 rounded-2xl" style={{background:'#fff', boxShadow:'0 0 28px rgba(94,234,212,0.18)'}}>
+                    <img src={qrDataUrl} alt="Scan this QR code with your authenticator app" className="w-44 h-44" />
+                  </div>
+                </div>
+              )}
               <div className="p-3 rounded-xl space-y-1" style={{background:'rgba(94,234,212,0.10)', border:'1px solid rgba(94,234,212,0.15)'}}>
                 <p className="text-xs" style={{color:'rgba(234,229,236,0.6)'}}>Secret key (manual entry)</p>
                 <p className="font-mono text-sm tracking-widest select-all" style={{color:'#eae5ec'}}>{secret}</p>
@@ -1754,6 +1767,7 @@ function Dashboard({ onNavigate, onNavigateToBills }) {
 // Employees List
 function EmployeesList({ user, onViewEmployee, onCreateEmployee }) {
   const [employees, setEmployees] = useState([]);
+  const [telephoneAssets, setTelephoneAssets] = useState([]);
   const [filterOptions, setFilterOptions] = useState({});
   const [filters, setFilters] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -5025,16 +5039,18 @@ function ExtensionsPage({ user }) {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [exts, depts, locs, emps] = await Promise.all([
+      const [exts, depts, locs, emps, assets] = await Promise.all([
         api.get('extensions').catch(() => []),
         api.get('departments').catch(() => []),
         api.get('locations').catch(() => []),
         api.get('employees').catch(() => []),
+        api.get('assets').catch(() => []),
       ]);
       setExtensions(Array.isArray(exts) ? exts : []);
       setDepartments(Array.isArray(depts) ? depts : []);
       setLocations(Array.isArray(locs) ? locs : []);
       setEmployees(Array.isArray(emps) ? emps.filter(e => e.status === 'Active') : []);
+      setTelephoneAssets(Array.isArray(assets) ? assets.filter(a => a.category_name === 'IT Telephone') : []);
     } catch (err) {
       console.error('Extensions load error:', err);
       toast.error('Failed to load extensions');
@@ -5045,7 +5061,7 @@ function ExtensionsPage({ user }) {
 
   const openAdd = () => {
     setEditingId(null);
-    setForm({ isActive: true, permission: 'internal' });
+    setForm({ isActive: true, permission: 'internal', phoneType: 'none', phoneAssetId: null });
     setDialogOpen(true);
   };
 
@@ -5059,6 +5075,7 @@ function ExtensionsPage({ user }) {
     if (!form.extensionNumber?.trim()) return toast.error('Extension number is required');
     if (!form.assignedTo) return toast.error('Assign an employee to this extension');
     if (!form.permission) return toast.error('Permission level is required');
+    if (form.phoneType === 'physical' && !form.phoneAssetId) return toast.error('Select an available IT Telephone asset');
     setSaving(true);
     try {
       const assignedEmployee = employees.find(e => e.id === form.assignedTo);
@@ -5100,6 +5117,7 @@ function ExtensionsPage({ user }) {
   const getDeptName = (id) => departments.find(d => d.id === id)?.name || '—';
   const getLocName = (id) => locations.find(l => l.id === id)?.name || '—';
   const getEmpName = (id) => employees.find(e => e.id === id)?.name || null;
+  const getPhoneAsset = (id) => telephoneAssets.find(a => a.id === id);
 
   const permBadge = (p) => {
     if (p === 'internal') return { label: 'Internal', style: { background: 'rgba(142,142,147,0.2)', color: '#8E8E93' } };
@@ -5188,6 +5206,7 @@ function ExtensionsPage({ user }) {
               <TableHead>Location</TableHead>
               <TableHead>Permission</TableHead>
               <TableHead>Assigned To</TableHead>
+              <TableHead>Phone</TableHead>
               <TableHead>Status</TableHead>
               {canEdit && <TableHead>Actions</TableHead>}
             </TableRow>
@@ -5195,7 +5214,7 @@ function ExtensionsPage({ user }) {
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={canEdit ? 7 : 6} className="text-center py-12" style={{color:'rgba(234,229,236,0.4)'}}>
+                <TableCell colSpan={canEdit ? 8 : 7} className="text-center py-12" style={{color:'rgba(234,229,236,0.4)'}}>
                   <Phone className="h-10 w-10 mx-auto mb-2 opacity-20" />
                   <p>No extensions found</p>
                 </TableCell>
@@ -5215,6 +5234,13 @@ function ExtensionsPage({ user }) {
                   </TableCell>
                   <TableCell style={{color:'rgba(234,229,236,0.7)'}}>
                     {empName ? <span className="text-sm" style={{color:'#5eead4'}}>{empName}</span> : <span style={{color:'rgba(234,229,236,0.3)'}}>Unassigned</span>}
+                  </TableCell>
+                  <TableCell style={{color:'rgba(234,229,236,0.7)'}}>
+                    {ext.phoneType === 'physical'
+                      ? <span className="text-sm">{getPhoneAsset(ext.phoneAssetId)?.asset_tag || ext.phoneAssetTag || 'Physical phone'}</span>
+                      : ext.phoneType === 'softphone'
+                        ? <span className="text-sm" style={{color:'#5eead4'}}>Softphone</span>
+                        : <span style={{color:'rgba(234,229,236,0.3)'}}>None</span>}
                   </TableCell>
                   <TableCell>
                     {canEdit ? (
@@ -5305,6 +5331,29 @@ function ExtensionsPage({ user }) {
                 placeholder="Search employee..."
               />
             </div>
+            <div>
+              <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Phone Type (optional)</Label>
+              <Select value={form.phoneType || 'none'} onValueChange={v => setForm({...form, phoneType:v, phoneAssetId:v === 'physical' ? form.phoneAssetId : null})}>
+                <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.12)', color:'#eae5ec'}}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="softphone">Softphone</SelectItem>
+                  <SelectItem value="physical">Physical phone</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {form.phoneType === 'physical' && (
+              <div>
+                <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>IT Telephone Asset *</Label>
+                <SearchableSelect
+                  options={telephoneAssets.filter(a => !a.assigned_to || a.id === form.phoneAssetId).map(a => ({id:a.id, name:`${a.asset_tag}${a.brand ? ` · ${a.brand}` : ''}${a.serial_number ? ` · ${a.serial_number}` : ''}`}))}
+                  value={form.phoneAssetId || ''}
+                  onChange={v => setForm({...form, phoneAssetId:v || null})}
+                  placeholder="Select an unassigned telephone..."
+                />
+                <p className="text-xs mt-1.5" style={{color:'rgba(234,229,236,0.4)'}}>Only unassigned assets in the exact “IT Telephone” category are shown.</p>
+              </div>
+            )}
             <div>
               <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Notes (optional)</Label>
               <Textarea placeholder="Any notes about this extension..." value={form.notes || ''} onChange={e => setForm({...form, notes: e.target.value})} rows={2} style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.12)', color:'#eae5ec', resize:'none'}} />
@@ -6412,13 +6461,11 @@ export default function App() {
 
   // Handle notification click - navigate to appropriate page
   const handleNotificationClick = (notif) => {
-    if (notif.type === 'vacation_ended' && notif.employee_id) {
-      viewEmployee(notif.employee_id);
-    } else if ((notif.type === 'expiry_approaching' || notif.type === 'renewal_approaching') && notif.asset_id) {
-      viewAsset(notif.asset_id);
-    } else if (notif.type === 'maintenance_pending' && notif.asset_id) {
-      setActiveTab('maintenance');
-    }
+    if (notif.type === 'vacation_ended' && notif.employee_id) return viewEmployee(notif.employee_id);
+    if (notif.type === 'maintenance_pending') return setActiveTab('maintenance');
+    if (notif.type === 'audit_overdue') return setActiveTab('audits');
+    // Warranty, expiry, renewal, and addon notifications are actionable in asset details.
+    if (notif.asset_id) return viewAsset(notif.asset_id);
   };
 
   if (loading) return (

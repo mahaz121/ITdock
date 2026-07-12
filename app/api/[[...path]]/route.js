@@ -5,7 +5,7 @@ import { sendMail } from '@/lib/mail';
 import { v4 as uuidv4 } from 'uuid';
 import { writeFile, mkdir, unlink, readFile } from 'fs/promises';
 import path from 'path';
-import { createHmac, randomBytes } from 'crypto';
+import { createHmac, createHash, randomBytes } from 'crypto';
 
 // ---- TOTP helpers (RFC 6238, no external dep) ----
 function _b32Decode(str) {
@@ -61,6 +61,43 @@ function computeIsIoT(name) {
   if (!name) return false;
   const n = name.toLowerCase();
   return ['switch', 'router', 'access point', 'wireless ap', 'wap', 'ip camera', 'camera', 'iot sensor', 'iot device', 'iot', 'firewall', 'nas', 'access point', 'ap '].some(k => n.includes(k));
+}
+
+async function validateExtensionTelephone(db, assetId, currentExtensionId = null) {
+  if (!assetId) return { error: 'Select an IT Telephone asset' };
+  const asset = await db.collection('assets').findOne({ id: assetId, archived: { $ne: true } });
+  if (!asset) return { error: 'Telephone asset not found' };
+  const category = await db.collection('categories').findOne({ id: asset.category });
+  if (category?.name !== 'IT Telephone') return { error: 'Only assets in the exact IT Telephone category can be selected' };
+  const usedBy = await db.collection('extensions').findOne({ phoneAssetId: assetId, ...(currentExtensionId ? { id: { $ne: currentExtensionId } } : {}) });
+  if (usedBy) return { error: 'This telephone is already linked to another extension' };
+  if (asset.assigned_to || !['In Stock', 'Available'].includes(asset.status)) return { error: 'Only unassigned IT Telephone assets can be selected' };
+  return { asset };
+}
+
+async function assignExtensionTelephone(db, asset, employeeId, user) {
+  const assignment = {
+    id: uuidv4(), asset_id: asset.id, employee_id: employeeId,
+    assigned_date: new Date().toISOString().split('T')[0], unassigned_date: null,
+    assignment_type: 'Normal', original_employee_id: null, custody_docs: [],
+    source: 'extension_directory'
+  };
+  await db.collection('assignments').insertOne(assignment);
+  await db.collection('assets').updateOne({ id: asset.id }, { $set: { status: 'Assigned', assigned_to: employeeId } });
+  await logAudit(db, user.id, 'ASSIGN_EXTENSION_PHONE', 'asset', asset.id, { employee_id: employeeId });
+}
+
+async function releaseExtensionTelephone(db, extension, user) {
+  if (!extension?.phoneAssetId) return;
+  await db.collection('assignments').updateMany(
+    { asset_id: extension.phoneAssetId, employee_id: extension.assignedTo, unassigned_date: null, source: 'extension_directory' },
+    { $set: { unassigned_date: new Date().toISOString().split('T')[0] } }
+  );
+  await db.collection('assets').updateOne(
+    { id: extension.phoneAssetId, assigned_to: extension.assignedTo },
+    { $set: { status: 'In Stock', assigned_to: null } }
+  );
+  await logAudit(db, user.id, 'UNASSIGN_EXTENSION_PHONE', 'asset', extension.phoneAssetId, { employee_id: extension.assignedTo });
 }
 
 // ---- Security helpers ----
@@ -1633,6 +1670,62 @@ export async function POST(request, { params }) {
     return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: legacyRoleFor(roles), roles, is_default_password: user.is_default_password || false } });
   }
 
+  // Request a password reset. Always return the same response to prevent account discovery.
+  if (route === 'auth/forgot-password') {
+    const { email } = await request.json();
+    if (!email) return error('Email is required');
+    const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const account = await db.collection('users').findOne({ email: { $regex: `^${escapedEmail}$`, $options: 'i' } });
+    if (account) {
+      const recent = await db.collection('password_reset_tokens').findOne({ user_id: account.id, created_at: { $gte: new Date(Date.now() - 60_000).toISOString() } });
+      if (!recent) {
+        const token = randomBytes(32).toString('hex');
+        const tokenHash = createHash('sha256').update(token).digest('hex');
+        const now = new Date();
+        const expires = new Date(now.getTime() + 30 * 60 * 1000);
+        await db.collection('password_reset_tokens').deleteMany({ user_id: account.id });
+        await db.collection('password_reset_tokens').insertOne({ id: uuidv4(), user_id: account.id, token_hash: tokenHash, created_at: now.toISOString(), expires_at: expires.toISOString() });
+        const appOrigin = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(/\/$/, '');
+        const resetUrl = `${appOrigin}/reset-password?token=${encodeURIComponent(token)}`;
+        try {
+          await sendMail({
+            to: account.email,
+            subject: 'Reset your ITdock password',
+            text: `Use this link to reset your ITdock password. It expires in 30 minutes: ${resetUrl}`,
+            html: `<div style="font-family:system-ui,sans-serif;color:#111827"><h2>Reset your ITdock password</h2><p>We received a request to reset your password.</p><p><a href="${resetUrl}" style="display:inline-block;padding:12px 20px;border-radius:8px;background:#0d9488;color:white;text-decoration:none;font-weight:600">Reset password</a></p><p>This secure link expires in 30 minutes. If you did not request it, you can ignore this email.</p></div>`
+          });
+        } catch (mailError) {
+          console.error('[ITdock password reset] Failed to send email:', mailError);
+        }
+      }
+    }
+    return json({ message: 'If an account exists for that email, a reset link has been sent.' });
+  }
+
+  // Complete password reset with a single-use, expiring token.
+  if (route === 'auth/reset-password') {
+    const { token, new_password } = await request.json();
+    if (!token || !new_password) return error('Token and new password are required');
+    const strengthError = validatePasswordStrength(new_password);
+    if (strengthError) return error(strengthError);
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const reset = await db.collection('password_reset_tokens').findOne({ token_hash: tokenHash });
+    if (!reset || new Date(reset.expires_at) <= new Date()) {
+      if (reset) await db.collection('password_reset_tokens').deleteOne({ id: reset.id });
+      return error('This reset link is invalid or has expired.', 400);
+    }
+    const account = await db.collection('users').findOne({ id: reset.user_id });
+    if (!account) return error('This reset link is invalid or has expired.', 400);
+    await db.collection('users').updateOne({ id: account.id }, { $set: { password: hashPassword(new_password), is_default_password: false } });
+    await Promise.all([
+      db.collection('password_reset_tokens').deleteMany({ user_id: account.id }),
+      db.collection('sessions').deleteMany({ user_id: account.id }),
+      db.collection('login_attempts').deleteMany({ $or: [{ email: account.email }, { email: account.username }] })
+    ]);
+    await logAudit(db, account.id, 'RESET_PASSWORD', 'user', account.id, {});
+    return json({ message: 'Password reset successfully. You can now sign in.' });
+  }
+
   // TOTP second-factor login
   if (route === 'auth/totp/login') {
     const { totp_session, totp_code } = await request.json();
@@ -3099,6 +3192,13 @@ export async function POST(request, { params }) {
     if (existing) return error(`Extension ${extensionNumber} already exists`, 409);
     const assignedEmployee = await db.collection('employees').findOne({ id: body.assignedTo });
     if (!assignedEmployee) return error('Assigned employee not found', 404);
+    const phoneType = ['softphone', 'physical'].includes(body.phoneType) ? body.phoneType : 'none';
+    let telephoneAsset = null;
+    if (phoneType === 'physical') {
+      const validation = await validateExtensionTelephone(db, body.phoneAssetId);
+      if (validation.error) return error(validation.error, 400);
+      telephoneAsset = validation.asset;
+    }
     const doc = {
       id: uuidv4(),
       extensionNumber: extensionNumber.trim(),
@@ -3107,6 +3207,9 @@ export async function POST(request, { params }) {
       locationId: body.locationId || null,
       permission,
       assignedTo: body.assignedTo,
+      phoneType,
+      phoneAssetId: phoneType === 'physical' ? telephoneAsset.id : null,
+      phoneAssetTag: phoneType === 'physical' ? telephoneAsset.asset_tag : '',
       notes: body.notes || '',
       isActive: body.isActive !== false,
       createdBy: user.id,
@@ -3114,6 +3217,7 @@ export async function POST(request, { params }) {
       updatedAt: new Date().toISOString()
     };
     await db.collection('extensions').insertOne(doc);
+    if (telephoneAsset) await assignExtensionTelephone(db, telephoneAsset, body.assignedTo, user);
     await logAudit(db, user.id, 'CREATE', 'extension', doc.id, { extensionNumber: doc.extensionNumber });
     return json({ success: true, extension: doc });
   }
@@ -3595,6 +3699,27 @@ export async function PUT(request, { params }) {
       assignedEmployee = await db.collection('employees').findOne({ id: body.assignedTo });
       if (!assignedEmployee) return error('Assigned employee not found', 404);
     }
+    const nextAssignedTo = body.assignedTo !== undefined ? body.assignedTo : existing.assignedTo;
+    const phoneType = body.phoneType !== undefined
+      ? (['softphone', 'physical'].includes(body.phoneType) ? body.phoneType : 'none')
+      : (existing.phoneType || 'none');
+    const nextPhoneAssetId = phoneType === 'physical'
+      ? (body.phoneAssetId !== undefined ? body.phoneAssetId : existing.phoneAssetId)
+      : null;
+    const phoneChanged = existing.phoneAssetId !== nextPhoneAssetId || existing.assignedTo !== nextAssignedTo || existing.phoneType !== phoneType;
+    let telephoneAsset = null;
+    if (phoneType === 'physical' && phoneChanged) {
+      // The currently linked phone is allowed during validation; it will be released before reassignment.
+      if (nextPhoneAssetId === existing.phoneAssetId) {
+        telephoneAsset = await db.collection('assets').findOne({ id: nextPhoneAssetId, archived: { $ne: true } });
+        const category = telephoneAsset && await db.collection('categories').findOne({ id: telephoneAsset.category });
+        if (!telephoneAsset || category?.name !== 'IT Telephone') return error('Only assets in the exact IT Telephone category can be selected', 400);
+      } else {
+        const validation = await validateExtensionTelephone(db, nextPhoneAssetId, extId);
+        if (validation.error) return error(validation.error, 400);
+        telephoneAsset = validation.asset;
+      }
+    }
     const updates = {
       extensionNumber: body.extensionNumber?.trim() || existing.extensionNumber,
       name: assignedEmployee?.name || body.name?.trim() || existing.name,
@@ -3602,10 +3727,15 @@ export async function PUT(request, { params }) {
       locationId: body.locationId !== undefined ? (body.locationId || null) : existing.locationId,
       permission: body.permission || existing.permission,
       assignedTo: body.assignedTo !== undefined ? body.assignedTo : existing.assignedTo,
+      phoneType,
+      phoneAssetId: nextPhoneAssetId,
+      phoneAssetTag: phoneType === 'physical' ? (telephoneAsset?.asset_tag || existing.phoneAssetTag || '') : '',
       notes: body.notes !== undefined ? body.notes : existing.notes,
       isActive: body.isActive !== undefined ? body.isActive : existing.isActive,
       updatedAt: new Date().toISOString()
     };
+    if (phoneChanged && existing.phoneAssetId) await releaseExtensionTelephone(db, existing, user);
+    if (phoneChanged && telephoneAsset) await assignExtensionTelephone(db, telephoneAsset, nextAssignedTo, user);
     await db.collection('extensions').updateOne({ id: extId }, { $set: updates });
     await logAudit(db, user.id, 'UPDATE', 'extension', extId, { extensionNumber: updates.extensionNumber });
     return json({ success: true });
@@ -3823,6 +3953,7 @@ export async function DELETE(request, { params }) {
     const extId = pathSegments[1];
     const existing = await db.collection('extensions').findOne({ id: extId });
     if (!existing) return error('Extension not found', 404);
+    await releaseExtensionTelephone(db, existing, user);
     await db.collection('extensions').deleteOne({ id: extId });
     await logAudit(db, user.id, 'DELETE', 'extension', extId, { extensionNumber: existing.extensionNumber });
     return json({ success: true });
