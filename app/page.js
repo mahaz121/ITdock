@@ -5065,10 +5065,12 @@ function ExtensionsPage({ user }) {
   const [extensions, setExtensions] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [locations, setLocations] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [telephoneAssets, setTelephoneAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [filterCompany, setFilterCompany] = useState('');
   const [filterDept, setFilterDept] = useState('');
   const [filterLoc, setFilterLoc] = useState('');
   const [filterPerm, setFilterPerm] = useState('');
@@ -5085,16 +5087,18 @@ function ExtensionsPage({ user }) {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [exts, depts, locs, emps, assets] = await Promise.all([
+      const [exts, depts, locs, companiesData, emps, assets] = await Promise.all([
         api.get('extensions').catch(() => []),
         api.get('departments').catch(() => []),
         api.get('locations').catch(() => []),
+        api.get('companies').catch(() => []),
         api.get('employees').catch(() => []),
         api.get('assets').catch(() => []),
       ]);
       setExtensions(Array.isArray(exts) ? exts : []);
       setDepartments(Array.isArray(depts) ? depts : []);
       setLocations(Array.isArray(locs) ? locs : []);
+      setCompanies(Array.isArray(companiesData) ? companiesData : []);
       setEmployees(Array.isArray(emps) ? emps.filter(e => e.status === 'Active') : []);
       setTelephoneAssets(Array.isArray(assets) ? assets.filter(a => a.category_name === 'IT Telephone') : []);
     } catch (err) {
@@ -5173,6 +5177,8 @@ function ExtensionsPage({ user }) {
   };
 
   const filtered = (extensions || []).filter(e => {
+    const assignedEmployee = employees.find(emp => emp.id === e.assignedTo);
+    if (filterCompany && assignedEmployee?.company_id !== filterCompany) return false;
     if (filterDept && e.departmentId !== filterDept) return false;
     if (filterLoc && e.locationId !== filterLoc) return false;
     if (filterPerm && e.permission !== filterPerm) return false;
@@ -5206,6 +5212,15 @@ function ExtensionsPage({ user }) {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{color:'rgba(234,229,236,0.4)'}} />
           <Input placeholder="Search extension or employee..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec'}} />
         </div>
+        <Select value={filterCompany || '__all__'} onValueChange={v => setFilterCompany(v === '__all__' ? '' : v)}>
+          <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'170px'}}>
+            <SelectValue placeholder="All Companies" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Companies</SelectItem>
+            {companies.map(company => <SelectItem key={company.id} value={company.id}>{company.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
         <Select value={filterDept || '__all__'} onValueChange={v => setFilterDept(v === '__all__' ? '' : v)}>
           <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', width:'160px'}}>
             <SelectValue placeholder="All Departments" />
@@ -5235,8 +5250,8 @@ function ExtensionsPage({ user }) {
             <SelectItem value="international">International</SelectItem>
           </SelectContent>
         </Select>
-        {(search || filterDept || filterLoc || filterPerm) && (
-          <Button variant="ghost" size="sm" onClick={() => { setSearch(''); setFilterDept(''); setFilterLoc(''); setFilterPerm(''); }} style={{color:'rgba(234,229,236,0.5)'}}>
+        {(search || filterCompany || filterDept || filterLoc || filterPerm) && (
+          <Button variant="ghost" size="sm" onClick={() => { setSearch(''); setFilterCompany(''); setFilterDept(''); setFilterLoc(''); setFilterPerm(''); }} style={{color:'rgba(234,229,236,0.5)'}}>
             <X className="h-4 w-4 mr-1" />Clear
           </Button>
         )}
