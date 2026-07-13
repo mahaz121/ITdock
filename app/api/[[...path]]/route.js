@@ -1236,7 +1236,7 @@ export async function GET(request, { params }) {
     }
     
     const employeeProjection = lightweight
-      ? { id: 1, name: 1, employee_id: 1, status: 1, company_id: 1, project_id: 1, location_id: 1, department_id: 1 }
+      ? { id: 1, name: 1, employee_id: 1, designation: 1, status: 1, company_id: 1, project_id: 1, location_id: 1, department_id: 1 }
       : undefined;
     const employeeQuery = db.collection('employees').find(filter, employeeProjection ? { projection: employeeProjection } : {}).sort({ name: 1 });
     if (paginated) employeeQuery.skip((page - 1) * pageSize).limit(pageSize);

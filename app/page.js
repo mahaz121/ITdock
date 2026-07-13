@@ -5838,6 +5838,7 @@ function ExtensionsPage({ user }) {
             <TableRow>
               <TableHead>Ext. No.</TableHead>
               <TableHead>Department</TableHead>
+              <TableHead>Designation</TableHead>
               <TableHead>Location</TableHead>
               <TableHead>Permission</TableHead>
               <TableHead>Assigned To</TableHead>
@@ -5849,20 +5850,22 @@ function ExtensionsPage({ user }) {
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={canEdit ? 8 : 7} className="text-center py-12" style={{color:'rgba(234,229,236,0.4)'}}>
+                <TableCell colSpan={canEdit ? 9 : 8} className="text-center py-12" style={{color:'rgba(234,229,236,0.4)'}}>
                   <Phone className="h-10 w-10 mx-auto mb-2 opacity-20" />
                   <p>No extensions found</p>
                 </TableCell>
               </TableRow>
             ) : filtered.map(ext => {
               const badge = permBadge(ext.permission);
-              const empName = ext.assignedTo ? getEmpName(ext.assignedTo) : null;
+              const assignedEmployee = employees.find(employee => employee.id === ext.assignedTo);
+              const empName = assignedEmployee?.name || null;
               return (
                 <TableRow key={ext.id}>
                   <TableCell>
                     <span className="text-lg font-bold" style={{color:'#eae5ec'}}>{ext.extensionNumber}</span>
                   </TableCell>
                   <TableCell style={{color:'rgba(234,229,236,0.7)'}}>{getDeptName(ext.departmentId)}</TableCell>
+                  <TableCell style={{color:'rgba(234,229,236,0.7)'}}>{assignedEmployee?.designation || '—'}</TableCell>
                   <TableCell style={{color:'rgba(234,229,236,0.7)'}}>{getLocName(ext.locationId)}</TableCell>
                   <TableCell>
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={badge.style}>{badge.label}</span>
