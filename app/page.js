@@ -741,9 +741,13 @@ function LoginPage({ onLogin, onBack }) {
       <style>{`@keyframes loginFadeIn { from { opacity:0; transform:scale(0.97) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }`}</style>
       <div className="w-full max-w-sm" style={{animation:'loginFadeIn 0.25s ease'}}>
         <div className="text-center mb-6">
-          <div className="w-14 h-14 rounded-2xl bg-[#0d9488] mx-auto mb-3 flex items-center justify-center" style={{boxShadow:'0 4px 16px rgba(94,234,212,0.25)'}}>
-            {totpSession ? <KeyRound className="h-7 w-7 text-white" /> : <img src="/logo.png" alt="ITdock logo" className="h-10 w-10 object-contain" />}
-          </div>
+          {totpSession ? (
+            <div className="w-14 h-14 rounded-2xl bg-[#0d9488] mx-auto mb-3 flex items-center justify-center" style={{boxShadow:'0 4px 16px rgba(94,234,212,0.25)'}}>
+              <KeyRound className="h-7 w-7 text-white" />
+            </div>
+          ) : (
+            <img src="/logo.png" alt="ITdock logo" className="w-16 h-16 object-contain mx-auto mb-3" />
+          )}
           <h1 className="text-2xl font-bold" style={{color:'#eae5ec'}}>ITdock</h1>
           <p className="text-sm mt-1" style={{color:'rgba(234,229,236,0.6)'}}>{totpSession ? 'Two-Factor Authentication' : 'Sign in to your account'}</p>
         </div>
