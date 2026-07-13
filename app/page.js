@@ -5151,8 +5151,6 @@ function MaintenancePage({ user }) {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [reassignAction, setReassignAction] = useState('return_to_stock');
-  const [reassignEmployeeId, setReassignEmployeeId] = useState('');
-  const [employees, setEmployees] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalRecords, setTotalRecords] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -5170,12 +5168,8 @@ function MaintenancePage({ user }) {
   const loadReferences = async () => {
     setReferencesLoading(true);
     try {
-      const [ass, emps] = await Promise.all([
-        api.get('assets?lightweight=true'),
-        api.get('employees?status=Active&lightweight=true')
-      ]);
+      const ass = await api.get('assets?lightweight=true');
       setAssets(ass);
-      setEmployees(emps);
     } catch (err) { toast.error('Failed to load data'); }
     finally { setReferencesLoading(false); }
   };
@@ -5244,7 +5238,6 @@ function MaintenancePage({ user }) {
     setSelectedAsset(asset);
     setSelectedRecord(record);
     setReassignAction('return_to_stock');
-    setReassignEmployeeId('');
     setReassignDialogOpen(true);
   };
 
@@ -5252,10 +5245,10 @@ function MaintenancePage({ user }) {
     try {
       await api.post('maintenance/reassign', {
         asset_id: selectedRecord.asset_id,
-        action: reassignAction,
-        employee_id: reassignEmployeeId
+        maintenance_id: selectedRecord.id,
+        action: reassignAction
       });
-      toast.success(reassignAction === 'return_to_stock' ? 'Asset returned to stock' : 'Asset assigned to employee');
+      toast.success(reassignAction === 'return_to_stock' ? 'Asset returned to stock' : 'Asset returned to its previous holder');
       setReassignDialogOpen(false);
       loadRecords(); loadReferences();
     } catch (err) { toast.error(err.message); }
@@ -5287,8 +5280,6 @@ function MaintenancePage({ user }) {
     id: a.id, 
     name: `${a.asset_tag} - ${a.category_name || a.category}` 
   }));
-
-  const employeeOptions = employees.map(e => ({ id: e.id, name: e.name }));
 
   if (referencesLoading || recordsLoading) return <div className="p-8"><ITdockPageLoader label="Loading maintenance" /></div>;
 
@@ -5481,19 +5472,13 @@ function MaintenancePage({ user }) {
               </div>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="assign_to_employee" id="assign" />
-                <Label htmlFor="assign">Assign to Employee</Label>
+                <Label htmlFor="assign">Assign to Previous Holder</Label>
               </div>
             </RadioGroup>
             {reassignAction === 'assign_to_employee' && (
-              <div>
-                <Label>Select Employee *</Label>
-                <SearchableSelect 
-                  options={employeeOptions} 
-                  value={reassignEmployeeId} 
-                  onChange={setReassignEmployeeId} 
-                  placeholder="Choose employee..." 
-                />
-              </div>
+              <Alert>
+                <AlertDescription>The asset will be reassigned automatically to the employee who held it before maintenance.</AlertDescription>
+              </Alert>
             )}
           </div>
           <DialogFooter>
@@ -5501,7 +5486,6 @@ function MaintenancePage({ user }) {
             <Button 
               onClick={handleReassign} 
               className="bg-[#0d9488] hover:bg-[#0062CC]"
-              disabled={reassignAction === 'assign_to_employee' && !reassignEmployeeId}
             >
               Reassign Asset
             </Button>

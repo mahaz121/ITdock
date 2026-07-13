@@ -3085,6 +3085,8 @@ export async function POST(request, { params }) {
     
     const asset = await db.collection('assets').findOne({ id: asset_id });
     if (!asset) return error('Asset not found', 404);
+
+    let previousEmployeeId = null;
     
     // Remove asset from employee custody if assigned
     if (['Assigned', 'Temporarily Assigned', 'Handed Over (Vacation Coverage)'].includes(asset.status)) {
@@ -3093,6 +3095,7 @@ export async function POST(request, { params }) {
         unassigned_date: null 
       });
       if (assignment) {
+        previousEmployeeId = assignment.employee_id || null;
         await db.collection('assignments').updateOne(
           { id: assignment.id },
           { $set: { unassigned_date: new Date().toISOString().split('T')[0] } }
@@ -3103,6 +3106,7 @@ export async function POST(request, { params }) {
     const record = {
       id: uuidv4(),
       asset_id,
+      previous_employee_id: previousEmployeeId,
       description,
       date: date || new Date().toISOString().split('T')[0],
       work_performed: work_performed || '',
@@ -3222,12 +3226,14 @@ export async function POST(request, { params }) {
     if (!canAccess(user.role, 'maintenance')) return error('Forbidden', 403);
     
     const body = await request.json();
-    const { asset_id, action, employee_id } = body;
+    const { asset_id, maintenance_id, action } = body;
     
     if (!asset_id || !action) return error('Asset ID and action required');
+    if (!['return_to_stock', 'assign_to_employee'].includes(action)) return error('Invalid reassignment action');
     
     const asset = await db.collection('assets').findOne({ id: asset_id });
     if (!asset) return error('Asset not found', 404);
+    if (asset.status !== 'In Maintenance') return error('Asset is not currently in maintenance');
     
     if (action === 'return_to_stock') {
       await db.collection('assets').updateOne(
@@ -3235,14 +3241,32 @@ export async function POST(request, { params }) {
         { $set: { status: 'In Stock', updated_at: new Date().toISOString() } }
       );
       await logActivity(db, asset_id, 'RETURNED_TO_STOCK', 'Asset returned to stock after maintenance', user.id, user.name);
-    } else if (action === 'assign_to_employee' && employee_id) {
-      const employee = await db.collection('employees').findOne({ id: employee_id });
-      if (!employee) return error('Employee not found', 404);
+    } else if (action === 'assign_to_employee') {
+      const maintenance = maintenance_id
+        ? await db.collection('maintenance').findOne({ id: maintenance_id, asset_id })
+        : await db.collection('maintenance').findOne({ asset_id, status: 'completed' }, { sort: { completed_at: -1 } });
+      if (!maintenance) return error('Maintenance record not found', 404);
+
+      // New records retain the holder explicitly. For records created before this
+      // field existed, use the most recently closed assignment for this asset.
+      let previousEmployeeId = maintenance.previous_employee_id;
+      if (!previousEmployeeId) {
+        const previousAssignment = await db.collection('assignments').findOne(
+          { asset_id, employee_id: { $ne: null }, unassigned_date: { $ne: null } },
+          { sort: { unassigned_date: -1, created_at: -1 } }
+        );
+        previousEmployeeId = previousAssignment?.employee_id || null;
+      }
+      if (!previousEmployeeId) return error('No previous holder was found for this asset');
+
+      const employee = await db.collection('employees').findOne({ id: previousEmployeeId });
+      if (!employee) return error('The previous holder no longer exists', 404);
+      if (employee.status === 'Resigned' || employee.archived) return error('The previous holder is no longer an active employee');
       
       const assignment = {
         id: uuidv4(),
         asset_id,
-        employee_id,
+        employee_id: previousEmployeeId,
         assigned_date: new Date().toISOString().split('T')[0],
         unassigned_date: null,
         assignment_type: 'Normal',
