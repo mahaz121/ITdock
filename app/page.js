@@ -19,7 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
+import * as XLSX from '@e965/xlsx';
 import QRCode from 'qrcode';
 import {
   LayoutDashboard, Users, Package, Wrench, Trash2, FileText, Building2,
@@ -33,11 +33,13 @@ import {
 } from 'lucide-react';
 
 // Excel export helper
-function downloadXlsx(rows, sheetName, fileName) {
-  const ws = XLSX.utils.json_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  XLSX.writeFile(wb, fileName);
+async function downloadXlsx(rows, sheetName, fileName) {
+  const safeCell = value => typeof value === 'string' && /^[=+\-@]/.test(value) ? `'${value}` : value;
+  const safeRows = rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, safeCell(value)])));
+  const worksheet = XLSX.utils.json_to_sheet(safeRows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, String(sheetName).slice(0, 31));
+  XLSX.writeFile(workbook, fileName, { compression: true });
 }
 
 let apiRequestSequence = 0;
@@ -45,22 +47,17 @@ let apiRequestSequence = 0;
 // API helper
 const api = {
   token: null,
-  setToken(token, sessionId = null) {
-    this.token = token;
+  setToken(_token, sessionId = null) {
+    this.token = 'http-only-cookie';
     if (typeof window !== 'undefined') {
-      localStorage.setItem('mahaz_token', token);
-      localStorage.removeItem('itdock_token'); // migrate old key
+      localStorage.removeItem('mahaz_token');
+      localStorage.removeItem('itdock_token');
       if (sessionId) { localStorage.setItem('mahaz_session', sessionId); localStorage.removeItem('itdock_session'); }
     }
   },
   getToken() {
     if (!this.token && typeof window !== 'undefined') {
-      // migrate: pick up token from old key if new key not set
-      this.token = localStorage.getItem('mahaz_token') || localStorage.getItem('itdock_token') || null;
-      if (this.token && !localStorage.getItem('mahaz_token')) {
-        localStorage.setItem('mahaz_token', this.token);
-        localStorage.removeItem('itdock_token');
-      }
+      this.token = this.getSessionId() ? 'http-only-cookie' : null;
     }
     return this.token;
   },
@@ -80,12 +77,11 @@ const api = {
   },
   async request(method, path, data = null, isFormData = false) {
     const headers = {};
-    const token = this.getToken();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    this.getToken();
     if (!isFormData) headers['Content-Type'] = 'application/json';
     const sessionId = this.getSessionId();
     if (sessionId) headers['X-Session-Id'] = sessionId;
-    const options = { method, headers };
+    const options = { method, headers, credentials: 'same-origin' };
     if (data) options.body = isFormData ? data : JSON.stringify(data);
     const shouldTrack = typeof window !== 'undefined' && method === 'GET' && !path.startsWith('dashboard/notifications');
     const requestId = shouldTrack ? ++apiRequestSequence : null;
@@ -1053,7 +1049,7 @@ function ForcePasswordChangeModal({ onPasswordChanged }) {
             <Input type="password" value={current} onChange={e => setCurrent(e.target.value)} placeholder="Enter current password" required />
           </div>
           <div><Label className="text-sm mb-1.5 block">New Password</Label>
-            <Input type="password" value={next} onChange={e => setNext(e.target.value)} placeholder="Min 8 chars, upper, lower, number" required />
+            <Input type="password" value={next} onChange={e => setNext(e.target.value)} placeholder="Min 12 chars, upper, lower, number" required minLength={12} maxLength={128} />
             {next && (
               <div className="mt-2">
                 <div className="flex gap-1 mb-1">{[1,2,3,4,5].map(i => (
@@ -1320,7 +1316,7 @@ function SecurityDialog({ open, onOpenChange, onLogout }) {
               <Input type="password" value={cpCurrent} onChange={e => setCpCurrent(e.target.value)} placeholder="Enter current password" />
             </div>
             <div><Label className="text-sm mb-1.5 block">New Password</Label>
-              <Input type="password" value={cpNew} onChange={e => setCpNew(e.target.value)} placeholder="Min 8 chars, upper, lower, number" />
+              <Input type="password" value={cpNew} onChange={e => setCpNew(e.target.value)} placeholder="Min 12 chars, upper, lower, number" minLength={12} maxLength={128} />
               {cpNew && (
                 <div className="mt-2">
                   <div className="flex gap-1 mb-1">{[1,2,3,4,5].map(i => (
@@ -1566,7 +1562,7 @@ function Dashboard({ onNavigate, onNavigateToBills }) {
         'Renewal Date': a.renewal_date || '',
         'Notes': a.notes || '',
       }));
-      downloadXlsx(rows, 'Assets', `itdock_assets_${new Date().toISOString().slice(0,10)}.xlsx`);
+      await downloadXlsx(rows, 'Assets', `itdock_assets_${new Date().toISOString().slice(0,10)}.xlsx`);
       toast.success('Excel file downloaded');
     } catch (err) { toast.error('Export failed'); }
   };
@@ -2003,7 +1999,7 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
       'Status': e.status || '',
       'Assets': e.asset_count || 0,
       }));
-      downloadXlsx(rows, 'Employees', `mahaz_employees_${new Date().toISOString().slice(0,10)}.xlsx`);
+      await downloadXlsx(rows, 'Employees', `mahaz_employees_${new Date().toISOString().slice(0,10)}.xlsx`);
       toast.success('Excel file downloaded');
     } catch (err) { toast.error(err.message); }
   };
@@ -2017,15 +2013,17 @@ function EmployeesList({ user, onViewEmployee, onCreateEmployee, onAssignAsset }
 
   const handleEmployeeImportFile = async (file) => {
     if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast.error('Excel file must be 5MB or smaller'); return; }
     setImportLoading(true);
     setImportPreview(null);
     try {
-      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellFormula: false, cellHTML: false, bookVBA: false });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       if (!sheet) throw new Error('The workbook does not contain a worksheet');
       const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false }).map(row =>
         Object.fromEntries(Object.entries(row).map(([header, value]) => [String(header).trim(), value]))
       );
+      if (parsed.length > 5000) throw new Error('A maximum of 5,000 employees can be imported at once');
       const requiredHeaders = ['Company', 'Department', 'Employee Name', 'Designation', 'Manager', 'Work Phone', 'Employee ID', 'Project'];
       const headers = parsed.length ? Object.keys(parsed[0]).map(header => String(header).trim()) : [];
       const missingHeaders = requiredHeaders.filter(header => !headers.includes(header));
@@ -3291,7 +3289,7 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
       'OS': a.specs?.os || '',
       'Notes': a.notes || '',
       }));
-      downloadXlsx(rows, 'Assets', `mahaz_assets_${new Date().toISOString().slice(0,10)}.xlsx`);
+      await downloadXlsx(rows, 'Assets', `mahaz_assets_${new Date().toISOString().slice(0,10)}.xlsx`);
       toast.success('Excel file downloaded');
     } catch (err) { toast.error(err.message); }
   };
@@ -6705,8 +6703,8 @@ function AuditLogPage({ user, embedded }) {
     loadLogs(1, empty);
   };
 
-  const handleExport = () => {
-    downloadXlsx(logs.map(l => ({
+  const handleExport = async () => {
+    await downloadXlsx(logs.map(l => ({
       Timestamp: new Date(l.timestamp).toLocaleString(),
       User: l.user_name || '',
       Action: l.action,

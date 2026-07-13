@@ -1,7 +1,7 @@
 # ITDock - Production Dockerfile
 # Multi-stage build for optimized image size
 
-FROM node:20-alpine AS base
+FROM node:20.19-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -24,10 +24,8 @@ WORKDIR /app
 # Build-time env vars needed to satisfy module-level checks
 ARG MONGO_URL=mongodb://mongo:27017
 ARG DB_NAME=itdock
-ARG JWT_SECRET=build-time-placeholder-secret-32-chars-long
 ENV MONGO_URL=$MONGO_URL
 ENV DB_NAME=$DB_NAME
-ENV JWT_SECRET=$JWT_SECRET
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
@@ -60,7 +58,7 @@ RUN mkdir -p /app/uploads/asset-docs \
     && mkdir -p /app/uploads/custody \
     && mkdir -p /app/uploads/audit \
     && chown -R nextjs:nodejs /app/uploads \
-    && chmod -R 777 /app/uploads
+    && chmod -R 750 /app/uploads
 
 # Switch to non-root user
 USER nextjs

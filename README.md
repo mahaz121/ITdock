@@ -57,7 +57,8 @@ cp .env.example .env
 JWT_SECRET="$(openssl rand -hex 32)"
 API_KEY_SALT="$(openssl rand -hex 32)"
 sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${JWT_SECRET}|" .env
-printf '\nAPI_KEY_SALT=%s\n' "$API_KEY_SALT" >> .env
+sed -i "s|^API_KEY_SALT=.*|API_KEY_SALT=${API_KEY_SALT}|" .env
+# Also set INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD before first startup.
 
 # Build and start.
 npm run build
@@ -67,11 +68,10 @@ npm start
 Open `http://SERVER_IP:3000`, then sign in with:
 
 ```text
-Username: admin
-Password: admin
+Use the INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD values configured before first startup.
 ```
 
-Change the default password immediately. `npm start` runs in the foreground;
+Remove `INITIAL_ADMIN_PASSWORD` from the environment after the first administrator is created. `npm start` runs in the foreground;
 use the production section in [INSTALL.md](./INSTALL.md) to keep ITDock running
 with PM2 and place it behind HTTPS.
 
@@ -100,8 +100,10 @@ ITDock reads its configuration from `.env`.
 | `DB_NAME` | MongoDB database name | `itdock` |
 | `JWT_SECRET` | Signs authentication tokens; use a random value | `openssl rand -hex 32` |
 | `API_KEY_SALT` | Hashes API keys; use a different random value | `openssl rand -hex 32` |
+| `INITIAL_ADMIN_EMAIL` | One-time bootstrap administrator login | `admin@example.com` |
+| `INITIAL_ADMIN_PASSWORD` | One-time strong bootstrap password | Password manager generated value |
+| `APP_URL` | Canonical origin used for CSRF and reset-link validation | `https://itdock.example.com` |
 | `NEXT_PUBLIC_BASE_URL` | Public application URL | `https://itdock.example.com` |
-| `CORS_ORIGINS` | Allowed web origin | `https://itdock.example.com` |
 | `UPLOAD_DIR` | Persistent document storage | `/var/lib/itdock/uploads` |
 
 Never commit a populated `.env` file.
@@ -149,9 +151,9 @@ uploads/                     Development upload storage
 
 Before exposing ITDock to a network:
 
-- Change the default `admin` password.
+- Configure a unique bootstrap administrator and remove its password variable after first startup.
 - Generate unique `JWT_SECRET` and `API_KEY_SALT` values.
-- Set `CORS_ORIGINS` to the application domain instead of `*`.
+- Set `APP_URL` to the canonical HTTPS origin.
 - Enable MongoDB authentication.
 - Use HTTPS through a reverse proxy.
 - Restrict ports 3000 and 27017 from public access.

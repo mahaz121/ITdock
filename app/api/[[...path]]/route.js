@@ -1,11 +1,37 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { hashPassword, verifyPassword, generateToken, verifyToken, getUserFromRequest, canAccess, normalizeRoles } from '@/lib/auth';
+import { hashPassword, verifyPassword, passwordNeedsRehash, generateToken, verifyToken, getUserFromRequest, getTokenFromRequest, canAccess, normalizeRoles } from '@/lib/auth';
 import { sendMail } from '@/lib/mail';
-import { v4 as uuidv4 } from 'uuid';
 import { writeFile, mkdir, unlink, readFile } from 'fs/promises';
 import path from 'path';
-import { createHmac, createHash, randomBytes } from 'crypto';
+import { createHmac, createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { assertRequestSize, isSafeHttpUrl, normalizeJson, safeUploadPath, validateUploadedFile } from '@/lib/security';
+
+const uuidv4 = randomUUID;
+
+function requiredSecret(name) {
+  const value = process.env[name];
+  if (!value || value.length < 32) throw new Error(`${name} must contain at least 32 random characters`);
+  return value;
+}
+
+function withAuthCookie(response, token) {
+  response.cookies.set('itdock_auth', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    path: '/',
+    maxAge: 15 * 60,
+  });
+  return response;
+}
+
+function enforceSameOrigin(request) {
+  const origin = request.headers.get('origin');
+  if (!origin) return;
+  const expected = new URL(process.env.APP_URL || request.url).origin;
+  if (origin !== expected) throw Object.assign(new Error('Cross-origin request rejected'), { status: 403 });
+}
 
 // ---- TOTP helpers (RFC 6238, no external dep) ----
 function _b32Decode(str) {
@@ -36,7 +62,11 @@ function _totpCode(secret, step) {
 
 function verifyTOTP(secret, token) {
   const step = Math.floor(Date.now() / 30000);
-  return [step - 1, step, step + 1].some(s => _totpCode(secret, s) === token);
+  const supplied = Buffer.from(String(token));
+  return supplied.length === 6 && [step - 1, step, step + 1].some(s => {
+    const expected = Buffer.from(_totpCode(secret, s));
+    return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+  });
 }
 
 function generateTOTPSecret() {
@@ -104,6 +134,20 @@ async function releaseExtensionTelephone(db, extension, user) {
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
 
+async function enforceRateLimit(db, request, bucket, limit, windowMs) {
+  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  const client = request.headers.get('x-real-ip') || forwarded || 'unknown';
+  const window = Math.floor(Date.now() / windowMs);
+  const id = createHash('sha256').update(`${bucket}|${client}|${window}`).digest('hex');
+  const expiresAt = new Date((window + 2) * windowMs);
+  const result = await db.collection('rate_limits').findOneAndUpdate(
+    { _id: id },
+    { $inc: { count: 1 }, $setOnInsert: { bucket, client, expiresAt } },
+    { upsert: true, returnDocument: 'after', includeResultMetadata: false }
+  );
+  if (result.count > limit) throw Object.assign(new Error('Too many requests. Please try again later.'), { status: 429 });
+}
+
 async function checkLockout(db, email) {
   const rec = await db.collection('login_attempts').findOne({ email });
   if (!rec) return null;
@@ -132,35 +176,26 @@ async function clearLoginAttempts(db, email) {
 }
 
 function validatePasswordStrength(password) {
-  if (!password || password.length < 8) return 'Password must be at least 8 characters';
+  if (!password || password.length < 12) return 'Password must be at least 12 characters';
+  if (password.length > 128) return 'Password must not exceed 128 characters';
   if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
   if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter';
   if (!/[0-9]/.test(password)) return 'Password must contain at least one number';
   return null;
 }
 
-function sanitizeString(val) {
-  if (typeof val !== 'string') return val;
-  return val
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
-    .replace(/javascript\s*:/gi, '')
-    .replace(/on\w+\s*=\s*["'][^"']*["']/gi, '')
-    .trim();
+function sanitizeBody(obj) {
+  return normalizeJson(obj);
 }
 
-function sanitizeBody(obj) {
-  if (!obj || typeof obj !== 'object') return obj;
-  const out = {};
-  for (const [k, v] of Object.entries(obj)) {
-    out[k] = typeof v === 'string' ? sanitizeString(v) : v;
-  }
-  return out;
+function safeRegex(value) {
+  return String(value || '').slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ---- Session helpers ----
 async function createSession(db, user, token, request) {
   const id = uuidv4();
-  const tokenHash = createHmac('sha256', process.env.JWT_SECRET || 'mahaz-secret-2024').update(token).digest('hex');
+  const tokenHash = createHmac('sha256', requiredSecret('JWT_SECRET')).update(token).digest('hex');
   const ua = request.headers.get('user-agent') || 'Unknown';
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     || request.headers.get('x-real-ip')
@@ -170,17 +205,15 @@ async function createSession(db, user, token, request) {
   return id;
 }
 
-function touchSession(db, sessionId) {
+function touchSession(db, sessionId, userId) {
   if (!sessionId) return;
-  db.collection('sessions').updateOne({ id: sessionId }, { $set: { last_active: new Date().toISOString() } }).catch(() => {});
+  db.collection('sessions').updateOne({ id: sessionId, user_id: userId }, { $set: { last_active: new Date().toISOString() } }).catch(() => {});
 }
 
 // ---- API key auth helper ----
 const API_KEY_PREFIX = 'mhz_';
-const API_KEY_HASH_SALT = process.env.API_KEY_SALT || 'mahaz-apikey-salt-2024';
-
 function hashApiKey(key) {
-  return createHmac('sha256', API_KEY_HASH_SALT).update(key).digest('hex');
+  return createHmac('sha256', requiredSecret('API_KEY_SALT')).update(key).digest('hex');
 }
 
 function generateApiKey() {
@@ -191,13 +224,17 @@ async function getAuthUser(request, db) {
   // 1. Try JWT
   const jwtUser = getUserFromRequest(request);
   if (jwtUser) {
+    const rawToken = getTokenFromRequest(request) || '';
+    const tokenHash = createHmac('sha256', requiredSecret('JWT_SECRET')).update(rawToken).digest('hex');
+    const session = await db.collection('sessions').findOne({ user_id: jwtUser.id, token_hash: tokenHash });
+    if (!session) return null;
     const dbUser = await db.collection('users').findOne({ id: jwtUser.id });
     if (!dbUser) return null;
     const roles = normalizeRoles(dbUser.roles || dbUser.role);
     if (!Array.isArray(dbUser.roles) || JSON.stringify(dbUser.roles) !== JSON.stringify(roles)) {
       db.collection('users').updateOne({ id: dbUser.id }, { $set: { roles, role: roles[0] } }).catch(() => {});
     }
-    return { ...jwtUser, role: legacyRoleFor(roles), roles };
+    return { ...jwtUser, role: legacyRoleFor(roles), roles, employee_id: dbUser.employee_id || null };
   }
 
   // 2. Try API key from X-API-Key header or "ApiKey <key>" Authorization
@@ -211,6 +248,7 @@ async function getAuthUser(request, db) {
   const keyRecord = await db.collection('api_keys').findOne({ key_hash: keyHash });
   if (!keyRecord) return null;
   if (keyRecord.expires_at && new Date(keyRecord.expires_at) < new Date()) return null;
+  if (keyRecord.revoked_at) return null;
 
   // Update last_used async
   db.collection('api_keys').updateOne({ id: keyRecord.id }, { $set: { last_used: new Date().toISOString() } }).catch(() => {});
@@ -218,15 +256,13 @@ async function getAuthUser(request, db) {
   const dbUser = await db.collection('users').findOne({ id: keyRecord.user_id });
   if (!dbUser) return null;
   const roles = normalizeRoles(dbUser.roles || dbUser.role);
-  return { id: dbUser.id, email: dbUser.email, role: legacyRoleFor(roles), roles, name: dbUser.name, via_api_key: true, api_key_id: keyRecord.id, api_key_scopes: keyRecord.scopes || [] };
+  return { id: dbUser.id, email: dbUser.email, role: legacyRoleFor(roles), roles, name: dbUser.name, employee_id: dbUser.employee_id || null, via_api_key: true, api_key_id: keyRecord.id, api_key_scopes: keyRecord.scopes || [] };
 }
-
-const TOTP_HMAC_KEY = process.env.JWT_SECRET || 'mahaz-secret-2024';
 
 function generateTotpSession(userId) {
   const exp = Date.now() + 5 * 60 * 1000;
   const payload = `${userId}|${exp}`;
-  const sig = createHmac('sha256', TOTP_HMAC_KEY).update(payload).digest('hex');
+  const sig = createHmac('sha256', requiredSecret('JWT_SECRET')).update(payload).digest('hex');
   return Buffer.from(`${payload}|${sig}`).toString('base64url');
 }
 
@@ -237,26 +273,20 @@ function verifyTotpSession(token) {
     if (parts.length !== 3) return null;
     const [userId, expStr, sig] = parts;
     const payload = `${userId}|${expStr}`;
-    const expected = createHmac('sha256', TOTP_HMAC_KEY).update(payload).digest('hex');
-    if (sig !== expected) return null;
+    const expected = createHmac('sha256', requiredSecret('JWT_SECRET')).update(payload).digest();
+    const supplied = Buffer.from(sig, 'hex');
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
     if (Date.now() > parseInt(expStr)) return null;
     return userId;
   } catch { return null; }
 }
 
-// CORS headers
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
 function json(data, status = 200) {
-  return NextResponse.json(data, { status, headers: corsHeaders });
+  return NextResponse.json(data, { status });
 }
 
 function error(message, status = 400) {
-  return NextResponse.json({ error: message }, { status, headers: corsHeaders });
+  return NextResponse.json({ error: message }, { status });
 }
 
 function legacyRoleFor(roles) {
@@ -266,6 +296,7 @@ function legacyRoleFor(roles) {
 }
 
 function writeAllowed(user, route, method) {
+  if (user.via_api_key && !user.api_key_scopes?.includes('write') && !user.api_key_scopes?.includes('*')) return false;
   const roles = normalizeRoles(user.roles || user.role);
   if (roles.includes('admin')) return true;
   if (roles.includes('asset_manager')) return !route.startsWith('vacation/') && !route.startsWith('users') && !route.startsWith('settings/');
@@ -415,6 +446,14 @@ async function checkManagerHierarchy(db, employeeId, newManagerId) {
   return subordinates.has(newManagerId);
 }
 
+function readAllowed(user, route) {
+  if (route.startsWith('auth/')) return true;
+  if (user.via_api_key && !user.api_key_scopes?.some(scope => ['read', '*'].includes(scope))) return false;
+  const roles = normalizeRoles(user.roles || user.role);
+  if (roles.some(role => ['admin', 'asset_manager', 'it_support'].includes(role))) return true;
+  return Boolean(user.employee_id) && (route === `employees/${user.employee_id}` || route === `employees/${user.employee_id}/vacation`);
+}
+
 let uniqueIndexPromise = null;
 async function ensureUniqueIndexes(db) {
   if (!uniqueIndexPromise) {
@@ -435,7 +474,8 @@ async function ensureUniqueIndexes(db) {
       db.collection('extensions').createIndex({ departmentId: 1, locationId: 1, permission: 1, assignedTo: 1 }, { name: 'extension_list_filters' }),
       db.collection('assets').createIndex({ archived: 1, status: 1, company_id: 1, project_id: 1, location_id: 1, category: 1, asset_tag: 1 }, { name: 'asset_list_filters' }),
       db.collection('maintenance').createIndex({ asset_id: 1, date: -1 }, { name: 'maintenance_asset_date' }),
-      db.collection('assetAudits').createIndex({ status: 1, scheduledDate: -1, assetId: 1 }, { name: 'audit_list_status_date' })
+      db.collection('assetAudits').createIndex({ status: 1, scheduledDate: -1, assetId: 1 }, { name: 'audit_list_status_date' }),
+      db.collection('rate_limits').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'rate_limit_ttl' })
     ]).catch(error => {
       console.error('[ITdock indexes] Unique indexes could not be created. Remove existing duplicates, then restart the app.', error);
       // Do not retry every index on every API request. Validation still runs in the
@@ -475,17 +515,23 @@ async function initializeDatabase(db) {
   // Only create default admin if NO users exist at all (fresh install)
   const userCount = await db.collection('users').countDocuments();
   if (userCount === 0) {
+    const bootstrapEmail = process.env.INITIAL_ADMIN_EMAIL;
+    const bootstrapPassword = process.env.INITIAL_ADMIN_PASSWORD;
+    const passwordError = validatePasswordStrength(bootstrapPassword);
+    if (!bootstrapEmail || passwordError) {
+      throw new Error('Set INITIAL_ADMIN_EMAIL and a strong INITIAL_ADMIN_PASSWORD before first startup');
+    }
     await db.collection('users').insertOne({
       id: uuidv4(),
-      email: 'admin',
-      password: hashPassword('admin'),
+      email: bootstrapEmail.trim().toLowerCase(),
+      password: await hashPassword(bootstrapPassword),
       name: 'Super Admin',
       role: 'admin',
       roles: ['admin'],
       is_default_password: true,
       created_at: new Date().toISOString()
     });
-    console.log('Default admin created: admin/admin (CHANGE PASSWORD IMMEDIATELY!)');
+    console.log('Initial administrator account created');
   }
   
   // Seed default company if none exists
@@ -541,14 +587,14 @@ async function seedAdmin(db) {
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, { status: 200, headers: corsHeaders });
+  return new NextResponse(null, { status: 204, headers: { Allow: 'GET, POST, PUT, DELETE, OPTIONS' } });
 }
 
 export async function GET(request, { params }) {
   const db = await getDb();
   await seedAdmin(db);
   
-  const pathSegments = params.path || [];
+  const pathSegments = (await params).path || [];
   const route = pathSegments.join('/');
   const url = new URL(request.url);
   const user = await getAuthUser(request, db);
@@ -607,9 +653,10 @@ export async function GET(request, { params }) {
   if (!user && !['health'].includes(route)) {
     return error('Unauthorized', 401);
   }
+  if (user && !readAllowed(user, route)) return error('Forbidden', 403);
 
   // Update session last_active (fire and forget)
-  touchSession(db, request.headers.get('x-session-id'));
+  touchSession(db, request.headers.get('x-session-id'), user.id);
 
   // ============ MASTER DATA ============
 
@@ -661,10 +708,10 @@ export async function GET(request, { params }) {
       query.assignedTo = { $in: companyEmployees.map(employee => employee.id) };
     }
     if (search) {
-      const employeeMatches = await db.collection('employees').find({ name: { $regex: search, $options: 'i' } }, { projection: { id: 1 } }).toArray();
+      const employeeMatches = await db.collection('employees').find({ name: { $regex: safeRegex(search), $options: 'i' } }, { projection: { id: 1 } }).toArray();
       query.$or = [
-        { extensionNumber: { $regex: search, $options: 'i' } },
-        { name: { $regex: search, $options: 'i' } },
+        { extensionNumber: { $regex: safeRegex(search), $options: 'i' } },
+        { name: { $regex: safeRegex(search), $options: 'i' } },
         { assignedTo: { $in: employeeMatches.map(employee => employee.id) } },
       ];
     }
@@ -691,7 +738,7 @@ export async function GET(request, { params }) {
       const value = url.searchParams.get(field); if (value) employeeFilter[field] = value;
     }
     const search = url.searchParams.get('search');
-    if (search) employeeFilter.$or = [{ name: { $regex: search, $options: 'i' } }, { company_email: { $regex: search, $options: 'i' } }];
+    if (search) employeeFilter.$or = [{ name: { $regex: safeRegex(search), $options: 'i' } }, { company_email: { $regex: safeRegex(search), $options: 'i' } }];
     const employeeQuery = db.collection('employees').find(employeeFilter).sort({ name: 1 });
     if (paginated) employeeQuery.skip((page - 1) * pageSize).limit(pageSize);
     const [employees, total] = await Promise.all([employeeQuery.toArray(), paginated ? db.collection('employees').countDocuments(employeeFilter) : Promise.resolve(null)]);
@@ -723,66 +770,9 @@ export async function GET(request, { params }) {
     catch { return json([]); }
   }
   
-  // Reset categories to new list
+  // Legacy mutation was intentionally removed from GET to preserve HTTP safety.
   if (route === 'categories/reset') {
-    if (user.role !== 'super_admin') return error('Forbidden', 403);
-    
-    // Delete all existing categories
-    await db.collection('categories').deleteMany({});
-    
-    // Insert new IT asset categories
-    const newCategories = [
-      // Computing Devices
-      { id: uuidv4(), name: 'Laptop', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Desktop', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Tablet', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Server', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Workstation', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Thin Client', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      
-      // Networking Equipment
-      { id: uuidv4(), name: 'Switch', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Router', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Firewall', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Access Point', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Modem', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Patch Panel', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      
-      // Peripherals & Accessories
-      { id: uuidv4(), name: 'Monitor', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Keyboard', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Mouse', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Docking Station', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Headset', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Webcam', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'External Hard Drive', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      
-      // Imaging & Printing
-      { id: uuidv4(), name: 'Camera (CCTV/Security)', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Printer', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Scanner', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Photocopier', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Projector', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      
-      // Communication
-      { id: uuidv4(), name: 'Smartphone', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'IP Phone', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'SIM Card', category_type: 'CONSUMABLE', created_at: new Date().toISOString() },
-      
-      // Infrastructure & Power
-      { id: uuidv4(), name: 'UPS (Battery Backup)', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'PDU (Power Distribution Unit)', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'Server Rack', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      { id: uuidv4(), name: 'KVM Switch', category_type: 'STORABLE', created_at: new Date().toISOString() },
-      
-      // Software & Subscription
-      { id: uuidv4(), name: 'Software License / Subscription', category_type: 'SUBSCRIPTION', created_at: new Date().toISOString() },
-    ];
-    
-    await db.collection('categories').insertMany(newCategories);
-    await logAudit(db, user.id, 'RESET', 'categories', 'all', { count: newCategories.length });
-    
-    return json({ success: true, count: newCategories.length, categories: newCategories });
+    return error('Method not allowed', 405);
   }
 
   // ============ DASHBOARD ============
@@ -1230,8 +1220,8 @@ export async function GET(request, { params }) {
     
     if (search) {
       filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { employee_id: { $regex: search, $options: 'i' } }
+        { name: { $regex: safeRegex(search), $options: 'i' } },
+        { employee_id: { $regex: safeRegex(search), $options: 'i' } }
       ];
     }
     
@@ -1408,8 +1398,8 @@ export async function GET(request, { params }) {
     
     if (search) {
       filter.$or = [
-        { asset_tag: { $regex: search, $options: 'i' } },
-        { serial_number: { $regex: search, $options: 'i' } }
+        { asset_tag: { $regex: safeRegex(search), $options: 'i' } },
+        { serial_number: { $regex: safeRegex(search), $options: 'i' } }
       ];
     }
     
@@ -1667,8 +1657,8 @@ export async function GET(request, { params }) {
       if (dateTo) filter.timestamp.$lte = dateTo + 'T23:59:59.999Z';
     }
     if (q) filter.$or = [
-      { entity_id: { $regex: q, $options: 'i' } },
-      { action: { $regex: q, $options: 'i' } }
+      { entity_id: { $regex: safeRegex(q), $options: 'i' } },
+      { action: { $regex: safeRegex(q), $options: 'i' } }
     ];
 
     const total = await db.collection('audit_logs').countDocuments(filter);
@@ -1789,17 +1779,21 @@ export async function GET(request, { params }) {
 
   // Serve/download asset document
   if (pathSegments[0] === 'assets' && pathSegments[1] === 'documents' && pathSegments.length === 3) {
+    if (!canAccess(user.role, 'assets')) return error('Forbidden', 403);
     const docId = pathSegments[2];
     const doc = await db.collection('asset_documents').findOne({ id: docId });
     if (!doc) return error('Document not found', 404);
     const uploadDir = process.env.UPLOAD_DIR || '/app/uploads';
-    const filePath = path.join(uploadDir, doc.stored_filename);
+    let filePath;
+    try { filePath = safeUploadPath(uploadDir, doc.stored_filename); }
+    catch { return error('Invalid stored file', 400); }
     try {
       const fileBytes = await readFile(filePath);
       return new NextResponse(fileBytes, {
         headers: {
           'Content-Type': doc.mime_type || 'application/octet-stream',
-          'Content-Disposition': `attachment; filename="${doc.filename}"`,
+          'Content-Disposition': `attachment; filename="download.${String(doc.stored_filename).split('.').pop()}"; filename*=UTF-8''${encodeURIComponent(String(doc.filename || 'download'))}`,
+          'Cache-Control': 'private, no-store',
         }
       });
     } catch (e) {
@@ -1887,10 +1881,12 @@ export async function GET(request, { params }) {
 
 export async function POST(request, { params }) {
   try {
+  enforceSameOrigin(request);
+  assertRequestSize(request, 15 * 1024 * 1024);
   const db = await getDb();
   await seedAdmin(db);
 
-  const pathSegments = params.path || [];
+  const pathSegments = (await params).path || [];
   const route = pathSegments.join('/');
 
   // Wrap request.json to auto-sanitize string fields
@@ -1899,9 +1895,10 @@ export async function POST(request, { params }) {
   
   // Login
   if (route === 'auth/login') {
+    await enforceRateLimit(db, request, 'login', 10, 15 * 60 * 1000);
     const body = await request.json();
     // Accept identifier (new), or fall back to legacy email/username fields
-    const identifier = body.identifier || body.username || body.email || '';
+    const identifier = String(body.identifier || body.username || body.email || '').trim().toLowerCase().slice(0, 254);
     const password = body.password;
 
     if (!identifier || !password) return error('Username/email and password required');
@@ -1914,12 +1911,15 @@ export async function POST(request, { params }) {
     const user = await db.collection('users').findOne({
       $or: [{ username: identifier }, { email: identifier }]
     });
-    if (!user || !verifyPassword(password, user.password)) {
+    if (!user || !await verifyPassword(password, user.password)) {
       await recordFailedLogin(db, identifier);
       return error('Incorrect username or password.', 401);
     }
 
     await clearLoginAttempts(db, identifier);
+    if (passwordNeedsRehash(user.password)) {
+      await db.collection('users').updateOne({ id: user.id }, { $set: { password: await hashPassword(password) } });
+    }
 
     // 2FA check
     if (user.totp_enabled && user.totp_secret) {
@@ -1930,11 +1930,12 @@ export async function POST(request, { params }) {
     const token = generateToken(user);
     const sessionId = await createSession(db, user, token, request);
     const roles = normalizeRoles(user.roles || user.role);
-    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: legacyRoleFor(roles), roles, is_default_password: user.is_default_password || false } });
+    return withAuthCookie(json({ session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: legacyRoleFor(roles), roles, is_default_password: user.is_default_password || false } }), token);
   }
 
   // Request a password reset. Always return the same response to prevent account discovery.
   if (route === 'auth/forgot-password') {
+    await enforceRateLimit(db, request, 'forgot-password', 5, 15 * 60 * 1000);
     const { email } = await request.json();
     if (!email) return error('Email is required');
     const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1948,12 +1949,9 @@ export async function POST(request, { params }) {
         const expires = new Date(now.getTime() + 30 * 60 * 1000);
         await db.collection('password_reset_tokens').deleteMany({ user_id: account.id });
         await db.collection('password_reset_tokens').insertOne({ id: uuidv4(), user_id: account.id, token_hash: tokenHash, created_at: now.toISOString(), expires_at: expires.toISOString() });
-        const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim();
-        const forwardedProto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
-        const publicHost = forwardedHost || request.headers.get('host');
-        const publicProto = forwardedProto || new URL(request.url).protocol.replace(':', '');
-        const proxyOrigin = publicHost ? `${publicProto}://${publicHost}` : new URL(request.url).origin;
-        const appOrigin = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || proxyOrigin).replace(/\/$/, '');
+        if (process.env.NODE_ENV === 'production' && !process.env.APP_URL) throw new Error('APP_URL must be configured in production');
+        const appOrigin = (process.env.APP_URL || new URL(request.url).origin).replace(/\/$/, '');
+        if (!isSafeHttpUrl(appOrigin)) throw new Error('APP_URL must use HTTP or HTTPS');
         const resetUrl = `${appOrigin}/reset-password?token=${encodeURIComponent(token)}`;
         try {
           await sendMail({
@@ -1984,7 +1982,7 @@ export async function POST(request, { params }) {
     }
     const account = await db.collection('users').findOne({ id: reset.user_id });
     if (!account) return error('This reset link is invalid or has expired.', 400);
-    await db.collection('users').updateOne({ id: account.id }, { $set: { password: hashPassword(new_password), is_default_password: false } });
+    await db.collection('users').updateOne({ id: account.id }, { $set: { password: await hashPassword(new_password), is_default_password: false } });
     await Promise.all([
       db.collection('password_reset_tokens').deleteMany({ user_id: account.id }),
       db.collection('sessions').deleteMany({ user_id: account.id }),
@@ -1996,6 +1994,7 @@ export async function POST(request, { params }) {
 
   // TOTP second-factor login
   if (route === 'auth/totp/login') {
+    await enforceRateLimit(db, request, 'totp-login', 10, 5 * 60 * 1000);
     const { totp_session, totp_code } = await request.json();
     if (!totp_session || !totp_code) return error('Session and code required');
     const userId = verifyTotpSession(totp_session);
@@ -2006,7 +2005,7 @@ export async function POST(request, { params }) {
     const token = generateToken(user);
     const sessionId = await createSession(db, user, token, request);
     const roles = normalizeRoles(user.roles || user.role);
-    return json({ token, session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: legacyRoleFor(roles), roles, is_default_password: user.is_default_password || false } });
+    return withAuthCookie(json({ session_id: sessionId, user: { id: user.id, email: user.email, name: user.name, role: legacyRoleFor(roles), roles, is_default_password: user.is_default_password || false } }), token);
   }
 
   // Protected routes
@@ -2015,7 +2014,7 @@ export async function POST(request, { params }) {
   if (!writeAllowed(user, route, 'POST')) return error('Forbidden', 403);
 
   // Update session last_active (fire and forget)
-  touchSession(db, request.headers.get('x-session-id'));
+  touchSession(db, request.headers.get('x-session-id'), user.id);
 
   // TOTP setup — generate secret, store as pending (not yet active)
   if (route === 'auth/totp/setup') {
@@ -2045,7 +2044,7 @@ export async function POST(request, { params }) {
     const { password } = await request.json();
     if (!password) return error('Password required to disable 2FA');
     const dbUser = await db.collection('users').findOne({ id: user.id });
-    if (!dbUser || !verifyPassword(password, dbUser.password)) return error('Incorrect password');
+    if (!dbUser || !await verifyPassword(password, dbUser.password)) return error('Incorrect password');
     await db.collection('users').updateOne({ id: user.id }, {
       $set: { totp_enabled: false },
       $unset: { totp_secret: '', totp_pending_secret: '' }
@@ -2063,7 +2062,9 @@ export async function POST(request, { params }) {
   if (route === 'auth/logout') {
     const sessionId = request.headers.get('x-session-id');
     if (sessionId) await db.collection('sessions').deleteOne({ id: sessionId, user_id: user.id });
-    return json({ success: true });
+    const response = json({ success: true });
+    response.cookies.set('itdock_auth', '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: 0 });
+    return response;
   }
 
   // Change password
@@ -2073,9 +2074,9 @@ export async function POST(request, { params }) {
     const strengthError = validatePasswordStrength(new_password);
     if (strengthError) return error(strengthError);
     const dbUser = await db.collection('users').findOne({ id: user.id });
-    if (!dbUser || !verifyPassword(current_password, dbUser.password)) return error('Current password is incorrect');
+    if (!dbUser || !await verifyPassword(current_password, dbUser.password)) return error('Current password is incorrect');
     if (current_password === new_password) return error('New password must differ from current password');
-    await db.collection('users').updateOne({ id: user.id }, { $set: { password: hashPassword(new_password), is_default_password: false } });
+    await db.collection('users').updateOne({ id: user.id }, { $set: { password: await hashPassword(new_password), is_default_password: false } });
     await logAudit(db, user.id, 'CHANGE_PASSWORD', 'user', user.id, {});
     return json({ message: 'Password changed successfully' });
   }
@@ -2299,6 +2300,8 @@ export async function POST(request, { params }) {
     if (!normalizedEmail || !password || !name || !roles.length) {
       return error('All fields required');
     }
+    const passwordError = validatePasswordStrength(password);
+    if (passwordError) return error(passwordError);
     
     const existing = await db.collection('users').findOne({ email: normalizedEmail }, { collation: { locale: 'en', strength: 2 } });
     if (existing) return error(`Login email "${normalizedEmail}" already exists`, 409);
@@ -2311,10 +2314,11 @@ export async function POST(request, { params }) {
       id: uuidv4(),
       email: normalizedEmail,
       ...(normalizedUsername ? { username: normalizedUsername } : {}),
-      password: hashPassword(password),
+      password: await hashPassword(password),
       name,
       role: roles[0],
       roles,
+      employee_id: body.employee_id || null,
       created_at: new Date().toISOString()
     };
     
@@ -2573,6 +2577,7 @@ export async function POST(request, { params }) {
     if (!category) {
       return error('Category required');
     }
+    if (!isSafeHttpUrl(provider_url) || !isSafeHttpUrl(specs?.managementUrl)) return error('Provider and management URLs must use HTTP or HTTPS');
 
     // Look up category to determine asset_type
     const categoryDoc = await db.collection('categories').findOne({ id: category });
@@ -2592,7 +2597,7 @@ export async function POST(request, { params }) {
     const newAsset = {
       id: uuidv4(),
       asset_tag: normalizedAssetTag,
-      asset_type: body.asset_type || derivedAssetType,
+      asset_type: derivedAssetType,
       category,
       category_type: categoryType,
       brand: brand || '',
@@ -2965,12 +2970,10 @@ export async function POST(request, { params }) {
       return error('File and assignment_id required');
     }
     
-    // Check file size (500KB max)
-    const MAX_SIZE = 500 * 1024; // 500KB
     const bytes = await file.arrayBuffer();
-    if (bytes.byteLength > MAX_SIZE) {
-      return error('File size exceeds 500KB limit');
-    }
+    let validated;
+    try { validated = validateUploadedFile(file, bytes, { allowedTypes: ['application/pdf'], maxSize: 500 * 1024 }); }
+    catch (uploadError) { return error(uploadError.message); }
     
     const assignment = await db.collection('assignments').findOne({ id: assignmentId });
     if (!assignment) return error('Assignment not found', 404);
@@ -2978,11 +2981,10 @@ export async function POST(request, { params }) {
     const uploadDir = process.env.UPLOAD_DIR || '/app/uploads';
     await mkdir(uploadDir, { recursive: true });
     
-    const ext = file.name.split('.').pop();
-    const filename = `${uuidv4()}.${ext}`;
-    const filepath = path.join(uploadDir, filename);
+    const filename = `${uuidv4()}.${validated.extension}`;
+    const filepath = safeUploadPath(uploadDir, filename);
     
-    await writeFile(filepath, Buffer.from(bytes));
+    await writeFile(filepath, validated.buffer, { flag: 'wx', mode: 0o640 });
     
     const docEntry = {
       id: uuidv4(),
@@ -3032,7 +3034,7 @@ export async function POST(request, { params }) {
     
     // Delete file from disk
     try {
-      const filepath = path.join(process.env.UPLOAD_DIR || '/app/uploads', doc.filepath.split('/').pop());
+      const filepath = safeUploadPath(process.env.UPLOAD_DIR || '/app/uploads', doc.filepath.split('/').pop());
       await unlink(filepath);
     } catch (e) {
       console.error('Failed to delete file:', e);
@@ -3334,21 +3336,21 @@ export async function POST(request, { params }) {
     const rule = typeRules[docType] || typeRules.note;
     const mimeType = file.type || 'application/octet-stream';
     const bytes = await file.arrayBuffer();
-    if (bytes.byteLength > rule.maxSize) return error(`File too large. Max ${rule.label}`, 400);
-    if (!rule.allowed.includes(mimeType)) return error(`Invalid file type for this document type. Allowed: ${rule.label}`, 400);
+    let validated;
+    try { validated = validateUploadedFile(file, bytes, { allowedTypes: rule.allowed, maxSize: rule.maxSize }); }
+    catch (uploadError) { return error(`${uploadError.message}. Allowed: ${rule.label}`, 400); }
 
     const uploadDir = process.env.UPLOAD_DIR || '/app/uploads';
     await mkdir(uploadDir, { recursive: true });
-    const ext = file.name.split('.').pop().toLowerCase();
-    const storedFilename = `${uuidv4()}.${ext}`;
-    await writeFile(path.join(uploadDir, storedFilename), Buffer.from(bytes));
+    const storedFilename = `${uuidv4()}.${validated.extension}`;
+    await writeFile(safeUploadPath(uploadDir, storedFilename), validated.buffer, { flag: 'wx', mode: 0o640 });
 
     const docEntry = {
       id: uuidv4(),
       asset_id: assetId,
       filename: file.name,
       stored_filename: storedFilename,
-      mime_type: mimeType,
+      mime_type: validated.mime,
       size: bytes.byteLength,
       doc_type: docType,
       notes,
@@ -3472,13 +3474,14 @@ export async function POST(request, { params }) {
     const file = fd.get('file');
     if (!file || typeof file === 'string') return error('No file provided', 400);
     const bytes = await file.arrayBuffer();
-    if (bytes.byteLength > 10 * 1024 * 1024) return error('File too large. Max 10MB', 400);
-    if (file.type !== 'application/pdf') return error('Only PDF files allowed', 400);
+    let validated;
+    try { validated = validateUploadedFile(file, bytes, { allowedTypes: ['application/pdf'], maxSize: 10 * 1024 * 1024 }); }
+    catch (uploadError) { return error(uploadError.message, 400); }
 
     const uploadDir = process.env.UPLOAD_DIR || '/app/uploads';
     await mkdir(uploadDir, { recursive: true });
     const storedFilename = `${uuidv4()}.pdf`;
-    await writeFile(path.join(uploadDir, storedFilename), Buffer.from(bytes));
+    await writeFile(safeUploadPath(uploadDir, storedFilename), validated.buffer, { flag: 'wx', mode: 0o640 });
 
     const docEntry = { id: uuidv4(), filename: file.name, stored_filename: storedFilename, size: bytes.byteLength, uploaded_at: new Date().toISOString(), uploaded_by: user.id };
     await db.collection('vacation_handovers').updateOne({ id: handoverId }, { $set: { doc_uploaded: true, temp_custody_doc: docEntry } });
@@ -3624,12 +3627,13 @@ export async function POST(request, { params }) {
     const file = formData.get('file');
     if (!file) return error('File required');
     const bytes = await file.arrayBuffer();
-    if (bytes.byteLength > 10 * 1024 * 1024) return error('File too large. Max 10MB');
+    let validated;
+    try { validated = validateUploadedFile(file, bytes, { allowedTypes: ['application/pdf', 'image/jpeg', 'image/png'], maxSize: 10 * 1024 * 1024 }); }
+    catch (uploadError) { return error(uploadError.message); }
     const uploadDir = process.env.UPLOAD_DIR || '/app/uploads';
     await mkdir(uploadDir, { recursive: true });
-    const ext = file.name.split('.').pop().toLowerCase();
-    const storedFilename = `audit_${uuidv4()}.${ext}`;
-    await writeFile(path.join(uploadDir, storedFilename), Buffer.from(bytes));
+    const storedFilename = `audit_${uuidv4()}.${validated.extension}`;
+    await writeFile(safeUploadPath(uploadDir, storedFilename), validated.buffer, { flag: 'wx', mode: 0o640 });
     const attachment = { id: uuidv4(), fileName: file.name, filePath: `/uploads/${storedFilename}`, uploadedAt: new Date().toISOString() };
     await db.collection('assetAudits').updateOne({ id: auditId }, {
       $push: { attachments: attachment },
@@ -3788,13 +3792,15 @@ export async function POST(request, { params }) {
   return error('Not found', 404);
   } catch (err) {
     console.error('POST handler error:', err);
-    return error(err.message || 'Internal server error', 500);
+    return error(err.status && err.status < 500 ? err.message : 'Internal server error', err.status || 500);
   }
 }
 
 export async function PUT(request, { params }) {
+  try { enforceSameOrigin(request); } catch (originError) { return error(originError.message, originError.status); }
+  assertRequestSize(request, 2 * 1024 * 1024);
   const db = await getDb();
-  const pathSegments = params.path || [];
+  const pathSegments = (await params).path || [];
   const route = pathSegments.join('/');
   const user = await getAuthUser(request, db);
 
@@ -3950,7 +3956,9 @@ export async function PUT(request, { params }) {
     }
     
     if (body.password) {
-      updates.password = hashPassword(body.password);
+      const passwordError = validatePasswordStrength(body.password);
+      if (passwordError) return error(passwordError);
+      updates.password = await hashPassword(body.password);
       updates.is_default_password = false; // Clear default password flag when password is changed
     }
     if ((body.roles || body.role) && canAccess(user, 'all')) {
@@ -3980,6 +3988,10 @@ export async function PUT(request, { params }) {
       const duplicateId = await db.collection('employees').findOne({ employee_id: employeeIdValue, id: { $ne: empId } }, { collation: { locale: 'en', strength: 2 } });
       if (duplicateId) return error(`Employee ID "${employeeIdValue}" already exists`, 409);
       body.employee_id = employeeIdValue;
+    }
+    if (body.employee_id !== undefined && canAccess(user, 'all')) {
+      if (body.employee_id && !await db.collection('employees').findOne({ id: body.employee_id })) return error('Employee not found', 404);
+      updates.employee_id = body.employee_id || null;
     }
     if (body.mobile_number !== undefined) {
       const mobileValue = body.mobile_number?.trim() || '';
@@ -4126,8 +4138,16 @@ export async function PUT(request, { params }) {
     
     const asset = await db.collection('assets').findOne({ id: assetId });
     if (!asset) return error('Asset not found', 404);
-    // Asset tags are generated at creation and remain immutable.
-    delete body.asset_tag;
+    const allowedFields = new Set([
+      'category', 'brand', 'vendor_name', 'receive_date', 'warranty_applicable',
+      'warranty_end_date', 'serial_number', 'connection_type', 'company_id',
+      'project_id', 'location_id', 'department_id', 'expiry_date', 'renewal_date',
+      'company_only', 'notes', 'provider_url', 'specs', 'ipAddress', 'ipAddresses',
+    ]);
+    for (const key of Object.keys(body)) {
+      if (!allowedFields.has(key)) delete body[key];
+    }
+    if (!isSafeHttpUrl(body.provider_url) || !isSafeHttpUrl(body.specs?.managementUrl)) return error('Provider and management URLs must use HTTP or HTTPS');
     if (body.serial_number !== undefined) {
       const serialValue = body.serial_number?.trim() || '';
       if (serialValue) {
@@ -4322,8 +4342,9 @@ export async function PUT(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
+  try { enforceSameOrigin(request); } catch (originError) { return error(originError.message, originError.status); }
   const db = await getDb();
-  const pathSegments = params.path || [];
+  const pathSegments = (await params).path || [];
   const route = pathSegments.join('/');
   const user = await getAuthUser(request, db);
 
@@ -4492,7 +4513,7 @@ export async function DELETE(request, { params }) {
 
     const uploadDir = process.env.UPLOAD_DIR || '/app/uploads';
     try {
-      await unlink(path.join(uploadDir, doc.stored_filename));
+      await unlink(safeUploadPath(uploadDir, doc.stored_filename));
     } catch (e) { console.error('Failed to delete file from disk:', e); }
 
     await db.collection('asset_documents').deleteOne({ id: docId });

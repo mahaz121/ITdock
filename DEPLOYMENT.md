@@ -39,8 +39,11 @@ nano .env
 MONGO_URL=mongodb://mongo:27017
 DB_NAME=itdock
 NEXT_PUBLIC_BASE_URL=https://your-domain.com
-CORS_ORIGINS=https://your-domain.com
+APP_URL=https://your-domain.com
 JWT_SECRET=<generate-with-openssl-rand-base64-32>
+API_KEY_SALT=<generate-with-openssl-rand-base64-32>
+INITIAL_ADMIN_EMAIL=admin@example.com
+INITIAL_ADMIN_PASSWORD=<one-time-strong-bootstrap-password>
 UPLOAD_DIR=/app/uploads
 ```
 
@@ -238,8 +241,9 @@ nano .env
 MONGO_URL=mongodb://itdock_user:SecurePassword123@localhost:27017/itdock?authSource=itdock
 DB_NAME=itdock
 NEXT_PUBLIC_BASE_URL=https://your-domain.com
-CORS_ORIGINS=https://your-domain.com
+APP_URL=https://your-domain.com
 JWT_SECRET=<generate-with-openssl-rand-base64-32>
+API_KEY_SALT=<generate-with-openssl-rand-base64-32>
 UPLOAD_DIR=/var/www/itdock/uploads
 ```
 
@@ -334,10 +338,10 @@ pm2 restart itdock
 ## Production Checklist
 
 ### Security
-- [ ] Changed default admin password
+- [ ] Bootstrapped a unique administrator and removed `INITIAL_ADMIN_PASSWORD`
 - [ ] Generated secure JWT_SECRET (32+ characters)
 - [ ] Enabled MongoDB authentication
-- [ ] Configured CORS to specific domain (not *)
+- [ ] Configured canonical HTTPS `APP_URL`
 - [ ] SSL/TLS certificate installed
 - [ ] Firewall configured (UFW or iptables)
 - [ ] Regular security updates scheduled

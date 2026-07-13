@@ -113,8 +113,10 @@ MONGO_URL=mongodb://127.0.0.1:27017
 DB_NAME=itdock
 JWT_SECRET=REPLACE_WITH_A_RANDOM_SECRET
 API_KEY_SALT=REPLACE_WITH_A_DIFFERENT_RANDOM_SECRET
+INITIAL_ADMIN_EMAIL=admin@example.com
+INITIAL_ADMIN_PASSWORD=REPLACE_WITH_A_STRONG_UNIQUE_PASSWORD
+APP_URL=http://SERVER_IP:3000
 NEXT_PUBLIC_BASE_URL=http://SERVER_IP:3000
-CORS_ORIGINS=http://SERVER_IP:3000
 UPLOAD_DIR=/var/lib/itdock/uploads
 NODE_ENV=production
 ```
@@ -128,7 +130,7 @@ openssl rand -hex 32
 
 Paste a different generated value into each setting. Replace `SERVER_IP` with
 the server's address. For a domain deployment, use the final HTTPS URL for both
-`NEXT_PUBLIC_BASE_URL` and `CORS_ORIGINS`.
+`NEXT_PUBLIC_BASE_URL` and `APP_URL`.
 
 Protect the configuration file:
 
@@ -207,13 +209,9 @@ http://SERVER_IP:3000
 
 Initial credentials:
 
-```text
-Username: admin
-Password: admin
-```
-
-Change this password immediately. The default account is created only when the
-users collection is empty.
+Sign in with the `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD` values. The
+bootstrap account is created only when the users collection is empty. Remove
+`INITIAL_ADMIN_PASSWORD` from the environment immediately after first startup.
 
 ## 13. Recommended production setup
 
@@ -315,7 +313,7 @@ Set these values in `/opt/itdock/.env`:
 
 ```dotenv
 NEXT_PUBLIC_BASE_URL=https://itdock.example.com
-CORS_ORIGINS=https://itdock.example.com
+APP_URL=https://itdock.example.com
 ```
 
 ### Enable HTTPS
@@ -434,14 +432,14 @@ The reverse proxy limit must be at least 10 MB; this guide configures 12 MB.
 
 ## 17. Production checklist
 
-- [ ] Default admin password changed
+- [ ] One-time administrator bootstrapped and `INITIAL_ADMIN_PASSWORD` removed
 - [ ] Unique `JWT_SECRET` configured
 - [ ] Unique `API_KEY_SALT` configured
 - [ ] `.env` permissions set to `600`
 - [ ] MongoDB authentication enabled
 - [ ] MongoDB and port 3000 blocked from public access
 - [ ] NGINX and HTTPS configured
-- [ ] `CORS_ORIGINS` restricted to the application domain
+- [ ] `APP_URL` set to the canonical HTTPS origin
 - [ ] MongoDB backups scheduled and tested
 - [ ] `/var/lib/itdock/uploads` included in backups
 - [ ] OS and npm security updates reviewed regularly

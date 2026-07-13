@@ -30,9 +30,9 @@ function ResetPasswordForm() {
     <div className="w-full max-w-md rounded-3xl p-8" style={{background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.09)', boxShadow:'0 24px 80px rgba(0,0,0,0.45)'}}>
       <img src="/logo.png" alt="ITdock logo" className="w-14 h-14 object-contain mx-auto mb-5" />
       <h1 className="text-2xl font-bold text-center">Choose a new password</h1>
-      <p className="text-sm text-center mt-2 mb-7" style={{color:'rgba(234,229,236,0.55)'}}>Use at least eight characters with uppercase, lowercase, and a number.</p>
+      <p className="text-sm text-center mt-2 mb-7" style={{color:'rgba(234,229,236,0.55)'}}>Use at least twelve characters with uppercase, lowercase, and a number.</p>
       {!success && token && <form onSubmit={submit} className="space-y-4">
-        <label className="block text-sm"><span className="flex items-center gap-2 mb-2"><KeyRound className="w-4 h-4" />New password</span><input type="password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} className="w-full h-11 rounded-xl px-3" /></label>
+        <label className="block text-sm"><span className="flex items-center gap-2 mb-2"><KeyRound className="w-4 h-4" />New password</span><input type="password" required minLength={12} maxLength={128} value={password} onChange={e => setPassword(e.target.value)} className="w-full h-11 rounded-xl px-3" /></label>
         <label className="block text-sm"><span className="mb-2 block">Confirm password</span><input type="password" required value={confirm} onChange={e => setConfirm(e.target.value)} className="w-full h-11 rounded-xl px-3" /></label>
         <button disabled={loading} className="w-full h-11 rounded-xl font-semibold text-white disabled:opacity-60" style={{background:'#0d9488'}}>{loading ? 'Resetting…' : 'Reset password'}</button>
       </form>}

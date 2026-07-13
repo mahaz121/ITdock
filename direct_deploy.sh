@@ -17,6 +17,10 @@ if [ -z "$GITHUB_REPO_URL" ] || [ -z "$DB_PASSWORD" ] || [ -z "$ADMIN_PASSWORD" 
     echo "Error: All fields are required!"
     exit 1
 fi
+if [[ "$DB_PASSWORD$ADMIN_PASSWORD" == *$'\n'* ]] || [[ ! "$GITHUB_REPO_URL" =~ ^(https://|git@github\.com:) ]]; then
+    echo "Error: invalid repository URL or newline in a password"
+    exit 1
+fi
 
 echo ""
 echo "Installing dependencies..."
@@ -45,10 +49,10 @@ sudo systemctl enable mongod
 
 # Configure MongoDB with authentication
 echo "Configuring MongoDB..."
-mongosh admin --eval "
+ITDOCK_DB_PASSWORD="$DB_PASSWORD" mongosh admin --eval "
 db.createUser({
   user: 'itdock_admin',
-  pwd: '$DB_PASSWORD',
+  pwd: process.env.ITDOCK_DB_PASSWORD,
   roles: [{ role: 'readWrite', db: 'itdock' }]
 })
 "
@@ -66,12 +70,19 @@ cd ~/itdock
 # Create .env file
 echo "Creating .env file..."
 JWT_SECRET=$(openssl rand -base64 32)
+API_KEY_SALT=$(openssl rand -base64 32)
+ENCODED_DB_PASSWORD=$(ITDOCK_DB_PASSWORD="$DB_PASSWORD" node -e "process.stdout.write(encodeURIComponent(process.env.ITDOCK_DB_PASSWORD))")
+PUBLIC_URL=http://$(hostname -I | awk '{print $1}'):3000
+umask 077
 cat > .env << EOF
-MONGO_URL=mongodb://itdock_admin:${DB_PASSWORD}@localhost:27017/itdock?authSource=admin
+MONGO_URL=mongodb://itdock_admin:${ENCODED_DB_PASSWORD}@localhost:27017/itdock?authSource=admin
 DB_NAME=itdock
-NEXT_PUBLIC_BASE_URL=http://$(hostname -I | awk '{print $1}'):3000
-CORS_ORIGINS=*
+NEXT_PUBLIC_BASE_URL=${PUBLIC_URL}
+APP_URL=${PUBLIC_URL}
 JWT_SECRET=${JWT_SECRET}
+API_KEY_SALT=${API_KEY_SALT}
+INITIAL_ADMIN_EMAIL=admin
+INITIAL_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 UPLOAD_DIR=/home/$(whoami)/itdock/uploads
 EOF
 
@@ -80,7 +91,7 @@ mkdir -p uploads
 
 # Install dependencies
 echo "Installing Node.js dependencies..."
-npm install
+npm ci
 
 # Build application
 echo "Building application..."
@@ -96,17 +107,6 @@ pm2 start npm --name "itdock" -- start
 pm2 save
 pm2 startup | tail -n 1 | bash
 
-# Update default admin password
-echo "Setting admin password..."
-sleep 5
-HASHED_PASS=$(node -e "const bcrypt=require('bcryptjs'); console.log(bcrypt.hashSync('$ADMIN_PASSWORD', 10));")
-mongosh "mongodb://itdock_admin:${DB_PASSWORD}@localhost:27017/itdock?authSource=admin" --eval "
-db.users.updateOne(
-  { email: 'admin' },
-  { \$set: { password: '$HASHED_PASS', is_default_password: false } }
-)
-"
-
 # Display info
 IP_ADDR=$(hostname -I | awk '{print $1}')
 echo ""
@@ -115,7 +115,7 @@ echo "ITDock Deployed Successfully!"
 echo "=========================================="
 echo "Access URL: http://$IP_ADDR:3000"
 echo "Username: admin"
-echo "Password: $ADMIN_PASSWORD"
+echo "The administrator password was not printed. Store it in your password manager."
 echo ""
 echo "Commands:"
 echo "  pm2 status       - Check app status"
