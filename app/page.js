@@ -1839,7 +1839,11 @@ function GlobalRequestLoader() {
   }, []);
 
   if (!visible) return null;
-  return <div className="fixed inset-0 z-[100]"><ITdockPageLoader label="Loading ITdock" fullScreen /></div>;
+  return (
+    <div className="absolute inset-0 z-[100]">
+      <ITdockPageLoader label="Loading view" />
+    </div>
+  );
 }
 
 // Employees List
@@ -7192,7 +7196,6 @@ export default function App() {
   return (
     <ConfirmProvider>
     <div className="flex h-screen overflow-hidden" style={{background: '#0a0e17', color:'#eae5ec'}}>
-      <GlobalRequestLoader />
       <IdleTimeoutWatcher onLogout={handleLogout} />
       {user.is_default_password && <ForcePasswordChangeModal onPasswordChanged={() => setUser({...user, is_default_password: false})} />}
       <Sidebar activeTab={activeTab} setActiveTab={navigateToTab} user={user} onLogout={handleLogout} />
@@ -7201,7 +7204,8 @@ export default function App() {
         <header className="h-14 flex items-center justify-end px-6 shrink-0" style={{background: '#050810', borderBottom: '1px solid rgba(255,255,255,0.08)'}}>
           <NotificationBell onNotificationClick={handleNotificationClick} />
         </header>
-        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden" style={{background:'#0a0e17', color:'#eae5ec'}}>
+        <main className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden" style={{background:'#0a0e17', color:'#eae5ec'}}>
+          <GlobalRequestLoader />
           <ErrorBoundary key={activeTab}>
           {activeTab === 'dashboard' && <Dashboard onNavigate={navigateToTab} onNavigateToBills={() => { setAssetsBillsFilter(true); navigateToTab('assets'); }} />}
           {activeTab === 'employees' && <EmployeesList user={user} onViewEmployee={viewEmployee} onCreateEmployee={() => {}} onAssignAsset={startAssetAssignment} />}
