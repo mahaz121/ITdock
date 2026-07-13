@@ -29,8 +29,24 @@ function withAuthCookie(response, token) {
 function enforceSameOrigin(request) {
   const origin = request.headers.get('origin');
   if (!origin) return;
-  const expected = new URL(process.env.APP_URL || request.url).origin;
-  if (origin !== expected) throw Object.assign(new Error('Cross-origin request rejected'), { status: 403 });
+  const requestUrl = new URL(request.url);
+  const forwardedProto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
+  const protocol = ['http', 'https'].includes(forwardedProto) ? `${forwardedProto}:` : requestUrl.protocol;
+  const effectiveHosts = [
+    request.headers.get('x-forwarded-host')?.split(',')[0]?.trim(),
+    request.headers.get('host')?.trim(),
+    requestUrl.host,
+  ].filter(Boolean);
+  const configuredOrigins = [
+    process.env.APP_URL,
+    process.env.NEXT_PUBLIC_BASE_URL,
+    ...(process.env.CORS_ORIGINS || '').split(','),
+  ].map(value => value?.trim()).filter(value => value && value !== '*');
+  const allowedOrigins = new Set(effectiveHosts.map(host => `${protocol}//${host}`));
+  for (const configured of configuredOrigins) {
+    try { allowedOrigins.add(new URL(configured).origin); } catch { /* Invalid configured origins are ignored. */ }
+  }
+  if (!allowedOrigins.has(origin)) throw Object.assign(new Error('Cross-origin request rejected'), { status: 403 });
 }
 
 // ---- TOTP helpers (RFC 6238, no external dep) ----
