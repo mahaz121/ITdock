@@ -4979,7 +4979,7 @@ function MasterDataPage({ user }) {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editing ? 'Edit' : 'Add'} {activeTab === 'categories' ? 'Category' : activeTab.slice(0, -1)}</DialogTitle>
+            <DialogTitle>{editing ? 'Edit' : 'Add'} {activeTab === 'companies' ? 'Company' : activeTab === 'categories' ? 'Category' : activeTab.slice(0, -1)}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div><Label>Name *</Label><Input value={formData.name || ''} onChange={(e) => setFormData({...formData, name: e.target.value})} /></div>

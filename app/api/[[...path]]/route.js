@@ -3828,10 +3828,12 @@ export async function PUT(request, { params }) {
     const body = await request.json();
     
     const updates = { ...body, updated_at: new Date().toISOString() };
+    delete updates._id;
     delete updates.id;
     delete updates.created_at;
     
-    await db.collection('companies').updateOne({ id }, { $set: updates });
+    const result = await db.collection('companies').updateOne({ id }, { $set: updates });
+    if (!result.matchedCount) return error('Company not found', 404);
     await logAudit(db, user.id, 'UPDATE', 'company', id, { fields: Object.keys(body) });
     
     return json({ success: true });
@@ -3844,6 +3846,7 @@ export async function PUT(request, { params }) {
     const body = await request.json();
     
     const updates = { ...body, updated_at: new Date().toISOString() };
+    delete updates._id;
     delete updates.id;
     delete updates.created_at;
     
@@ -3860,6 +3863,7 @@ export async function PUT(request, { params }) {
     const body = await request.json();
     
     const updates = { ...body, updated_at: new Date().toISOString() };
+    delete updates._id;
     delete updates.id;
     delete updates.created_at;
     
@@ -3876,6 +3880,7 @@ export async function PUT(request, { params }) {
     const body = await request.json();
     
     const updates = { ...body, updated_at: new Date().toISOString() };
+    delete updates._id;
     delete updates.id;
     delete updates.created_at;
     
@@ -3896,6 +3901,7 @@ export async function PUT(request, { params }) {
     }
 
     const updates = { ...body, updated_at: new Date().toISOString() };
+    delete updates._id;
     delete updates.id;
     delete updates.created_at;
     if (body.short_name !== undefined) {
