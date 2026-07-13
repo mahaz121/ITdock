@@ -646,9 +646,13 @@ function MahazLandingPage({ onLogin }) {
         <DialogContent style={{background:'#050810', border:'1px solid rgba(255,255,255,0.10)', color:'#eae5ec', maxWidth:400}}>
           <DialogHeader>
             <div className="flex items-center gap-3 mb-1">
-              <div className="w-9 h-9 rounded-xl bg-[#0d9488] flex items-center justify-center" style={{boxShadow:'0 0 14px rgba(94,234,212,0.3)'}}>
-                {totpSession ? <KeyRound className="h-5 w-5 text-white" /> : <img src="/logo.png" alt="ITdock logo" className="h-7 w-7 object-contain" />}
-              </div>
+              {totpSession ? (
+                <div className="w-9 h-9 rounded-xl bg-[#0d9488] flex items-center justify-center" style={{boxShadow:'0 0 14px rgba(94,234,212,0.3)'}}>
+                  <KeyRound className="h-5 w-5 text-white" />
+                </div>
+              ) : (
+                <img src="/logo.png" alt="ITdock logo" className="h-9 w-9 object-contain" />
+              )}
               <DialogTitle style={{color:'#eae5ec'}}>{totpSession ? 'Two-Factor Auth' : 'Sign in to ITdock'}</DialogTitle>
             </div>
           </DialogHeader>
