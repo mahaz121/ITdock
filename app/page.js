@@ -4214,8 +4214,8 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
                 </Button>
               )}
               {canAssign && asset.status === 'In Maintenance' && (() => {
-                const inProgressRecord = maintenanceRecords.find(m => m.status === 'in_progress');
-                const completedRecords = maintenanceRecords.filter(m => m.status === 'completed' && asset.status === 'In Maintenance');
+                const latestMaintenanceRecord = maintenanceRecords.find(m => m.is_latest_for_asset);
+                const inProgressRecord = latestMaintenanceRecord?.status === 'in_progress' ? latestMaintenanceRecord : null;
                 
                 if (inProgressRecord) {
                   // Show Complete Maintenance button
@@ -4236,7 +4236,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
                       <Check className="h-4 w-4 mr-2" />Complete Maintenance
                     </Button>
                   );
-                } else if (completedRecords.length > 0) {
+                } else if (latestMaintenanceRecord?.status === 'completed') {
                   // Show message to go to Maintenance page for reassignment
                   return (
                     <Alert className="flex-1">
@@ -5343,7 +5343,7 @@ function MaintenancePage({ user }) {
                             </Button>
                           </>
                         )}
-                        {r.status === 'completed' && asset?.status === 'In Maintenance' && (
+                        {r.status === 'completed' && r.is_latest_for_asset && asset?.status === 'In Maintenance' && (
                           <Button size="sm" onClick={() => openReassignDialog(r)} className="bg-[#0d9488] hover:bg-[#0062CC] text-white">
                             Reassign
                           </Button>

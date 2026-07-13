@@ -1642,11 +1642,19 @@ export async function GET(request, { params }) {
     const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
     const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get('page_size') || '40', 10) || 40));
     const filter = assetId ? { asset_id: assetId } : {};
-    const recordsQuery = db.collection('maintenance').find(filter).sort({ date: -1 });
+    const recordsQuery = db.collection('maintenance').find(filter).sort({ created_at: -1, date: -1, _id: -1 });
     if (paginated) recordsQuery.skip((page - 1) * pageSize).limit(pageSize);
     const [records, total] = await Promise.all([recordsQuery.toArray(), paginated ? db.collection('maintenance').countDocuments(filter) : Promise.resolve(null)]);
-    if (paginated) return json({ items: records, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
-    return json(records);
+    const assetIds = [...new Set(records.map(record => record.asset_id).filter(Boolean))];
+    const latestRecords = assetIds.length ? await db.collection('maintenance').aggregate([
+      { $match: { asset_id: { $in: assetIds } } },
+      { $sort: { created_at: -1, date: -1, _id: -1 } },
+      { $group: { _id: '$asset_id', latest_id: { $first: '$id' } } }
+    ]).toArray() : [];
+    const latestByAsset = new Map(latestRecords.map(record => [record._id, record.latest_id]));
+    const enrichedRecords = records.map(record => ({ ...record, is_latest_for_asset: latestByAsset.get(record.asset_id) === record.id }));
+    if (paginated) return json({ items: enrichedRecords, total, page, page_size: pageSize, total_pages: Math.max(1, Math.ceil(total / pageSize)) });
+    return json(enrichedRecords);
   }
 
   // ============ AUDIT LOG ============
@@ -3228,12 +3236,20 @@ export async function POST(request, { params }) {
     const body = await request.json();
     const { asset_id, maintenance_id, action } = body;
     
-    if (!asset_id || !action) return error('Asset ID and action required');
+    if (!asset_id || !maintenance_id || !action) return error('Asset ID, maintenance ID and action required');
     if (!['return_to_stock', 'assign_to_employee'].includes(action)) return error('Invalid reassignment action');
     
     const asset = await db.collection('assets').findOne({ id: asset_id });
     if (!asset) return error('Asset not found', 404);
     if (asset.status !== 'In Maintenance') return error('Asset is not currently in maintenance');
+
+    const [maintenance, latestMaintenance] = await Promise.all([
+      db.collection('maintenance').findOne({ id: maintenance_id, asset_id }),
+      db.collection('maintenance').findOne({ asset_id }, { sort: { created_at: -1, date: -1, _id: -1 } })
+    ]);
+    if (!maintenance) return error('Maintenance record not found', 404);
+    if (maintenance.status !== 'completed') return error('Maintenance must be completed before reassignment');
+    if (latestMaintenance?.id !== maintenance.id) return error('Only the latest maintenance record can be reassigned');
     
     if (action === 'return_to_stock') {
       await db.collection('assets').updateOne(
@@ -3242,11 +3258,6 @@ export async function POST(request, { params }) {
       );
       await logActivity(db, asset_id, 'RETURNED_TO_STOCK', 'Asset returned to stock after maintenance', user.id, user.name);
     } else if (action === 'assign_to_employee') {
-      const maintenance = maintenance_id
-        ? await db.collection('maintenance').findOne({ id: maintenance_id, asset_id })
-        : await db.collection('maintenance').findOne({ asset_id, status: 'completed' }, { sort: { completed_at: -1 } });
-      if (!maintenance) return error('Maintenance record not found', 404);
-
       // New records retain the holder explicitly. For records created before this
       // field existed, use the most recently closed assignment for this asset.
       let previousEmployeeId = maintenance.previous_employee_id;
