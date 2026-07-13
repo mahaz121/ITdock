@@ -3108,7 +3108,7 @@ export async function POST(request, { params }) {
       work_performed: work_performed || '',
       maintenance_cost: maintenance_cost || 0,
       technician_cost: technician_cost || 0,
-      currency: currency || 'USD',
+      currency: currency || 'SAR',
       maintenance_location: maintenance_location || 'Repair Shop',
       performed_by: user.name,
       status: 'in_progress',
@@ -3134,13 +3134,62 @@ export async function POST(request, { params }) {
   if (route === 'maintenance/complete') {
     if (!canAccess(user.role, 'maintenance')) return error('Forbidden', 403);
     
-    const body = await request.json();
-    const { maintenance_id, work_performed, maintenance_cost, technician_cost, currency } = body;
+    const isMultipart = request.headers.get('content-type')?.includes('multipart/form-data');
+    const submitted = isMultipart ? await request.formData() : await request.json();
+    const getValue = (key) => isMultipart ? submitted.get(key) : submitted[key];
+    const maintenance_id = getValue('maintenance_id');
+    const work_performed = String(getValue('work_performed') || '').trim();
+    const technicianCostValue = Number.parseFloat(getValue('technician_cost') || 0);
+    const legacyMaintenanceCost = Number.parseFloat(getValue('maintenance_cost'));
+    const currency = String(getValue('currency') || 'SAR').toUpperCase();
+    const parts_added = isMultipart ? getValue('parts_added') === 'true' : getValue('parts_added') === true;
+    const purchase_order_number = String(getValue('purchase_order_number') || '').trim();
+    let parts = getValue('parts') || [];
+    if (typeof parts === 'string') {
+      try { parts = JSON.parse(parts); } catch { return error('Invalid parts data', 400); }
+    }
     
     if (!maintenance_id) return error('Maintenance ID required');
+    if (!work_performed) return error('Work performed is required');
+    if (!Number.isFinite(technicianCostValue) || technicianCostValue < 0) return error('Technician charge must be zero or greater');
+    if (!['SAR', 'USD', 'GBP', 'EUR', 'AED', 'QAR', 'KWD', 'BHD', 'OMR', 'INR', 'PKR', 'BDT'].includes(currency)) return error('Invalid currency');
+    if (purchase_order_number.length > 100) return error('Purchase order number is too long');
+    if (!Array.isArray(parts) || parts.length > 50) return error('A maximum of 50 parts is allowed');
+    parts = parts_added ? parts.map(part => ({
+      name: String(part?.name || '').trim().slice(0, 200),
+      cost: Number.parseFloat(part?.cost || 0),
+      part_number: String(part?.part_number || '').trim().slice(0, 100)
+    })) : [];
+    if (parts_added && (!parts.length || parts.some(part => !part.name))) return error('A name is required for every part');
+    if (parts.some(part => !Number.isFinite(part.cost) || part.cost < 0)) return error('Part cost must be zero or greater');
     
     const maintenance = await db.collection('maintenance').findOne({ id: maintenance_id });
     if (!maintenance) return error('Maintenance record not found', 404);
+
+    let invoiceDocument = null;
+    const invoice = isMultipart ? submitted.get('invoice') : null;
+    if (invoice && typeof invoice !== 'string') {
+      const bytes = await invoice.arrayBuffer();
+      let validated;
+      try { validated = validateUploadedFile(invoice, bytes, { allowedTypes: ['application/pdf', 'image/jpeg', 'image/png'], maxSize: 10 * 1024 * 1024 }); }
+      catch (uploadError) { return error(`${uploadError.message}. Allowed: 10MB, PDF/JPG/PNG`, 400); }
+      const uploadDir = process.env.UPLOAD_DIR || '/app/uploads';
+      await mkdir(uploadDir, { recursive: true });
+      const storedFilename = `${uuidv4()}.${validated.extension}`;
+      await writeFile(safeUploadPath(uploadDir, storedFilename), validated.buffer, { flag: 'wx', mode: 0o640 });
+      invoiceDocument = {
+        id: uuidv4(), asset_id: maintenance.asset_id, maintenance_id,
+        filename: invoice.name, stored_filename: storedFilename, mime_type: validated.mime,
+        size: bytes.byteLength, doc_type: 'invoice',
+        notes: purchase_order_number ? `Maintenance invoice - PO ${purchase_order_number}` : 'Maintenance invoice',
+        uploaded_at: new Date().toISOString(), uploaded_by: user.id, uploaded_by_name: user.name
+      };
+      await db.collection('asset_documents').insertOne(invoiceDocument);
+    }
+
+    const maintenanceCost = parts_added
+      ? parts.reduce((sum, part) => sum + part.cost, 0)
+      : (getValue('parts_added') == null && Number.isFinite(legacyMaintenanceCost) ? legacyMaintenanceCost : 0);
     
     // Update maintenance record
     await db.collection('maintenance').updateOne(
@@ -3149,16 +3198,21 @@ export async function POST(request, { params }) {
         $set: { 
           status: 'completed',
           completed_at: new Date().toISOString(),
-          work_performed: work_performed || maintenance.work_performed,
-          maintenance_cost: maintenance_cost !== undefined ? maintenance_cost : maintenance.maintenance_cost,
-          technician_cost: technician_cost !== undefined ? technician_cost : maintenance.technician_cost,
-          currency: currency || maintenance.currency
+          work_performed,
+          parts_added,
+          parts,
+          maintenance_cost: maintenanceCost,
+          technician_cost: technicianCostValue,
+          currency,
+          purchase_order_number,
+          invoice_document_id: invoiceDocument?.id || maintenance.invoice_document_id || null
         } 
       }
     );
     
     // Asset stays "In Maintenance" until explicitly reassigned
     await logActivity(db, maintenance.asset_id, 'MAINTENANCE_COMPLETED', 'Maintenance work completed', user.id, user.name);
+    await logAudit(db, user.id, 'COMPLETE_MAINTENANCE', 'maintenance', maintenance_id, { parts_count: parts.length, purchase_order_number, invoice_document_id: invoiceDocument?.id || null });
     
     return json({ success: true });
   }

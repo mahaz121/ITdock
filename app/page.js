@@ -161,6 +161,103 @@ function ConfirmProvider({ children }) {
 
 function useConfirm() { return React.useContext(ConfirmContext); }
 
+const emptyMaintenancePart = () => ({ name: '', cost: '', part_number: '' });
+
+function buildMaintenanceCompletionPayload(maintenanceId, data, invoiceFile) {
+  const form = new FormData();
+  form.append('maintenance_id', maintenanceId);
+  form.append('work_performed', data.work_performed || '');
+  form.append('parts_added', data.parts_added ? 'true' : 'false');
+  form.append('parts', JSON.stringify(data.parts_added ? (data.parts || []) : []));
+  form.append('technician_cost', data.technician_cost || '0');
+  form.append('currency', data.currency || 'SAR');
+  form.append('purchase_order_number', data.purchase_order_number || '');
+  if (invoiceFile) form.append('invoice', invoiceFile);
+  return form;
+}
+
+function MaintenanceCompletionFields({ data, setData, invoiceFile, setInvoiceFile, currencies, message }) {
+  const parts = data.parts?.length ? data.parts : [emptyMaintenancePart()];
+  const updatePart = (index, field, value) => {
+    const next = parts.map((part, i) => i === index ? { ...part, [field]: value } : part);
+    setData({ ...data, parts: next });
+  };
+  const partsTotal = data.parts_added
+    ? parts.reduce((sum, part) => sum + (Number.parseFloat(part.cost) || 0), 0)
+    : 0;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <Label>Work Performed *</Label>
+        <Textarea value={data.work_performed || ''} onChange={(e) => setData({...data, work_performed: e.target.value})} rows={3} placeholder="Describe what was done..." />
+      </div>
+
+      <div className="rounded-lg border p-4 space-y-3" style={{borderColor:'rgba(255,255,255,0.12)'}}>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="maintenance-parts-added"
+            checked={!!data.parts_added}
+            onCheckedChange={(checked) => setData({ ...data, parts_added: checked === true, parts: data.parts?.length ? data.parts : [emptyMaintenancePart()] })}
+          />
+          <Label htmlFor="maintenance-parts-added" className="cursor-pointer">Were any parts added?</Label>
+        </div>
+
+        {data.parts_added && (
+          <div className="space-y-3 pt-1">
+            <div className="hidden md:grid grid-cols-12 gap-2 text-xs" style={{color:'rgba(234,229,236,0.6)'}}>
+              <span className="col-span-5">Part Name *</span>
+              <span className="col-span-3">Cost</span>
+              <span className="col-span-3">Part Number</span>
+            </div>
+            {parts.map((part, index) => (
+              <div key={index} className="grid grid-cols-1 md:grid-cols-12 gap-2">
+                <Input className="md:col-span-5" aria-label={`Part ${index + 1} name`} placeholder="Part name" value={part.name || ''} onChange={(e) => updatePart(index, 'name', e.target.value)} />
+                <Input className="md:col-span-3" aria-label={`Part ${index + 1} cost`} type="number" min="0" step="0.01" placeholder="0.00" value={part.cost ?? ''} onChange={(e) => updatePart(index, 'cost', e.target.value)} />
+                <Input className="md:col-span-3" aria-label={`Part ${index + 1} number`} placeholder="Part number" value={part.part_number || ''} onChange={(e) => updatePart(index, 'part_number', e.target.value)} />
+                <Button type="button" className="md:col-span-1" variant="ghost" size="icon" aria-label={`Remove part ${index + 1}`} disabled={parts.length === 1} onClick={() => setData({ ...data, parts: parts.filter((_, i) => i !== index) })}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            <div className="flex items-center justify-between gap-3">
+              <Button type="button" variant="outline" size="sm" onClick={() => setData({ ...data, parts: [...parts, emptyMaintenancePart()] })}>
+                <Plus className="h-4 w-4 mr-1" />Add Another Part
+              </Button>
+              <span className="text-sm font-medium">Parts total: {partsTotal.toFixed(2)} {data.currency || 'SAR'}</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <Label>Technician Charge</Label>
+          <Input type="number" min="0" step="0.01" value={data.technician_cost ?? ''} onChange={(e) => setData({...data, technician_cost: e.target.value})} placeholder="0.00" />
+        </div>
+        <div>
+          <Label>Currency</Label>
+          <Select value={data.currency || 'SAR'} onValueChange={(v) => setData({...data, currency: v})}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>{currencies.map(cur => <SelectItem key={cur} value={cur}>{cur}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div>
+        <Label>Purchase Order Number</Label>
+        <Input value={data.purchase_order_number || ''} onChange={(e) => setData({...data, purchase_order_number: e.target.value})} placeholder="Enter PO number" maxLength={100} />
+      </div>
+      <div>
+        <Label>Attach Invoice</Label>
+        <Input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setInvoiceFile(e.target.files?.[0] || null)} />
+        <p className="text-xs mt-1" style={{color:'rgba(234,229,236,0.5)'}}>{invoiceFile ? `Selected: ${invoiceFile.name}` : 'PDF, JPG or PNG, maximum 10MB'}</p>
+      </div>
+      <Alert><AlertDescription>{message}</AlertDescription></Alert>
+    </div>
+  );
+}
+
 // Searchable Select Component
 function SearchableSelect({ options, value, onChange, placeholder, disabled = false, onCreateNew = null }) {
   const [open, setOpen] = useState(false);
@@ -3762,6 +3859,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
   const [maintenanceRecords, setMaintenanceRecords] = useState([]);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const [completeFormData, setCompleteFormData] = useState({});
+  const [completionInvoiceFile, setCompletionInvoiceFile] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [docUploading, setDocUploading] = useState(null); // null or type string while uploading
   const [docForms, setDocForms] = useState({}); // per-type field state
@@ -3888,16 +3986,14 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
   };
 
   const handleCompleteMaintenance = async () => {
+    if (completeFormData.parts_added && (completeFormData.parts || []).some(part => !part.name?.trim())) {
+      return toast.error('Enter a name for every part added');
+    }
     try {
-      await api.post('maintenance/complete', {
-        maintenance_id: completeFormData.maintenance_id,
-        work_performed: completeFormData.work_performed,
-        maintenance_cost: completeFormData.maintenance_cost,
-        technician_cost: completeFormData.technician_cost,
-        currency: completeFormData.currency
-      });
+      await api.upload('maintenance/complete', buildMaintenanceCompletionPayload(completeFormData.maintenance_id, completeFormData, completionInvoiceFile));
       toast.success('Maintenance completed - You can now reassign from Maintenance page');
       setCompleteDialogOpen(false);
+      setCompletionInvoiceFile(null);
       loadData();
     } catch (err) { toast.error(err.message); }
   };
@@ -4128,10 +4224,13 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
                       setCompleteFormData({
                         maintenance_id: inProgressRecord.id,
                         work_performed: inProgressRecord.work_performed || '',
-                        maintenance_cost: inProgressRecord.maintenance_cost || '',
                         technician_cost: inProgressRecord.technician_cost || '',
-                        currency: inProgressRecord.currency || 'USD'
+                        currency: inProgressRecord.currency || 'SAR',
+                        parts_added: inProgressRecord.parts_added || (inProgressRecord.parts?.length > 0),
+                        parts: inProgressRecord.parts?.length ? inProgressRecord.parts : [emptyMaintenancePart()],
+                        purchase_order_number: inProgressRecord.purchase_order_number || ''
                       });
+                      setCompletionInvoiceFile(null);
                       setCompleteDialogOpen(true);
                     }} className="bg-green-600 hover:bg-green-700 text-white">
                       <Check className="h-4 w-4 mr-2" />Complete Maintenance
@@ -4297,6 +4396,8 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
                             {record.work_performed && (
                               <p className="text-xs text-[#6E6E73] mt-1">Work: {record.work_performed}</p>
                             )}
+                            {record.parts?.length > 0 && <p className="text-xs text-[#6E6E73] mt-1">Parts: {record.parts.map(part => `${part.name}${part.part_number ? ` (${part.part_number})` : ''}`).join(', ')}</p>}
+                            {record.purchase_order_number && <p className="text-xs text-[#6E6E73] mt-1">PO: {record.purchase_order_number}</p>}
                           </div>
                           <Badge className={
                             record.status === 'completed' ? 'bg-green-100 text-green-800' :
@@ -4310,7 +4411,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
                           <span>Location: {record.maintenance_location || 'N/A'}</span>
                           {totalCost > 0 && (
                             <span className="font-medium" style={{color:'#5eead4'}}>
-                              {totalCost.toFixed(2)} {record.currency || 'USD'}
+                              {totalCost.toFixed(2)} {record.currency || 'SAR'}
                             </span>
                           )}
                         </div>
@@ -4551,55 +4652,9 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
 
       {/* Complete Maintenance Dialog */}
       <Dialog open={completeDialogOpen} onOpenChange={setCompleteDialogOpen}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Complete Maintenance</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>Work Performed *</Label>
-              <Textarea 
-                value={completeFormData.work_performed || ''} 
-                onChange={(e) => setCompleteFormData({...completeFormData, work_performed: e.target.value})} 
-                rows={3} 
-                placeholder="Describe what was done..." 
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Maintenance Cost</Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  value={completeFormData.maintenance_cost} 
-                  onChange={(e) => setCompleteFormData({...completeFormData, maintenance_cost: e.target.value})} 
-                  placeholder="0.00"
-                />
-              </div>
-              <div>
-                <Label>Technician Cost</Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  value={completeFormData.technician_cost} 
-                  onChange={(e) => setCompleteFormData({...completeFormData, technician_cost: e.target.value})} 
-                  placeholder="0.00"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Currency</Label>
-              <Select value={completeFormData.currency} onValueChange={(v) => setCompleteFormData({...completeFormData, currency: v})}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {currencies.map(cur => <SelectItem key={cur} value={cur}>{cur}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <Alert>
-              <AlertDescription>
-                After completing, go to the Maintenance page to reassign this asset.
-              </AlertDescription>
-            </Alert>
-          </div>
+          <MaintenanceCompletionFields data={completeFormData} setData={setCompleteFormData} invoiceFile={completionInvoiceFile} setInvoiceFile={setCompletionInvoiceFile} currencies={currencies} message="After completing, go to the Maintenance page to reassign this asset." />
           <DialogFooter>
             <Button variant="outline" onClick={() => setCompleteDialogOpen(false)}>Cancel</Button>
             <Button
@@ -5090,6 +5145,7 @@ function MaintenancePage({ user }) {
   const [assets, setAssets] = useState([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
+  const [completionInvoiceFile, setCompletionInvoiceFile] = useState(null);
   const [reassignDialogOpen, setReassignDialogOpen] = useState(false);
   const [formData, setFormData] = useState({});
   const [selectedRecord, setSelectedRecord] = useState(null);
@@ -5141,7 +5197,7 @@ function MaintenancePage({ user }) {
       work_performed: '',
       maintenance_cost: '',
       technician_cost: '',
-      currency: 'USD',
+      currency: 'SAR',
       maintenance_location: 'Repair Shop'
     });
     setDialogOpen(true);
@@ -5160,24 +5216,25 @@ function MaintenancePage({ user }) {
     setSelectedRecord(record);
     setFormData({
       work_performed: record.work_performed || '',
-      maintenance_cost: record.maintenance_cost || '',
       technician_cost: record.technician_cost || '',
-      currency: record.currency || 'USD'
+      currency: record.currency || 'SAR',
+      parts_added: record.parts_added || (record.parts?.length > 0),
+      parts: record.parts?.length ? record.parts : [emptyMaintenancePart()],
+      purchase_order_number: record.purchase_order_number || ''
     });
+    setCompletionInvoiceFile(null);
     setCompleteDialogOpen(true);
   };
 
   const handleComplete = async () => {
+    if (formData.parts_added && (formData.parts || []).some(part => !part.name?.trim())) {
+      return toast.error('Enter a name for every part added');
+    }
     try {
-      await api.post('maintenance/complete', {
-        maintenance_id: selectedRecord.id,
-        work_performed: formData.work_performed,
-        maintenance_cost: formData.maintenance_cost,
-        technician_cost: formData.technician_cost,
-        currency: formData.currency
-      });
+      await api.upload('maintenance/complete', buildMaintenanceCompletionPayload(selectedRecord.id, formData, completionInvoiceFile));
       toast.success('Maintenance completed - Ready for reassignment');
       setCompleteDialogOpen(false);
+      setCompletionInvoiceFile(null);
       loadRecords(); loadReferences();
     } catch (err) { toast.error(err.message); }
   };
@@ -5276,7 +5333,7 @@ function MaintenancePage({ user }) {
                     <TableCell><Badge variant="outline">{r.maintenance_location || 'N/A'}</Badge></TableCell>
                     <TableCell>
                       {totalCost > 0 ? (
-                        <span className="font-medium">{totalCost.toFixed(2)} {r.currency || 'USD'}</span>
+                        <span className="font-medium">{totalCost.toFixed(2)} {r.currency || 'SAR'}</span>
                       ) : (
                         <span className="text-[#AEAEB2]">-</span>
                       )}
@@ -5395,50 +5452,9 @@ function MaintenancePage({ user }) {
 
       {/* Complete Maintenance Dialog */}
       <Dialog open={completeDialogOpen} onOpenChange={setCompleteDialogOpen}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Complete Maintenance</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>Work Performed *</Label>
-              <Textarea value={formData.work_performed || ''} onChange={(e) => setFormData({...formData, work_performed: e.target.value})} rows={3} placeholder="Describe what was done..." />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Maintenance Cost</Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  value={formData.maintenance_cost} 
-                  onChange={(e) => setFormData({...formData, maintenance_cost: e.target.value})} 
-                  placeholder="0.00"
-                />
-              </div>
-              <div>
-                <Label>Technician Cost</Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  value={formData.technician_cost} 
-                  onChange={(e) => setFormData({...formData, technician_cost: e.target.value})} 
-                  placeholder="0.00"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Currency</Label>
-              <Select value={formData.currency} onValueChange={(v) => setFormData({...formData, currency: v})}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {currencies.map(cur => <SelectItem key={cur} value={cur}>{cur}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <Alert>
-              <AlertDescription>
-                After completing, the asset will remain "In Maintenance" until you reassign it.
-              </AlertDescription>
-            </Alert>
-          </div>
+          <MaintenanceCompletionFields data={formData} setData={setFormData} invoiceFile={completionInvoiceFile} setInvoiceFile={setCompletionInvoiceFile} currencies={currencies} message={'After completing, the asset will remain "In Maintenance" until you reassign it.'} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setCompleteDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleComplete} className="bg-green-600 hover:bg-green-700 text-white" disabled={!formData.work_performed}>
