@@ -5628,7 +5628,12 @@ function ExtensionsPage({ user }) {
 
   const openEdit = (ext) => {
     setEditingId(ext.id);
-    setForm({ ...ext });
+    const assignedEmployee = employees.find(employee => employee.id === ext.assignedTo);
+    setForm({
+      ...ext,
+      departmentId: assignedEmployee?.department_id || null,
+      locationId: assignedEmployee?.location_id || null,
+    });
     setDialogOpen(true);
   };
 
@@ -5642,7 +5647,9 @@ function ExtensionsPage({ user }) {
       const assignedEmployee = employees.find(e => e.id === form.assignedTo);
       const payload = {
         ...form,
-        name: assignedEmployee?.name || form.name || form.extensionNumber.trim()
+        name: assignedEmployee?.name || form.name || form.extensionNumber.trim(),
+        departmentId: assignedEmployee?.department_id || null,
+        locationId: assignedEmployee?.location_id || null,
       };
       if (editingId) {
         await api.put(`extensions/${editingId}`, payload);
@@ -5867,27 +5874,11 @@ function ExtensionsPage({ user }) {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Department</Label>
-                <Select value={form.departmentId || '__none__'} onValueChange={v => setForm({...form, departmentId: v === '__none__' ? null : v})}>
-                  <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.12)', color:'#eae5ec'}}>
-                    <SelectValue placeholder="Select..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">None</SelectItem>
-                    {departments.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <Input value={form.departmentId ? getDeptName(form.departmentId) : 'None'} disabled className="disabled:opacity-70" style={{background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.08)', color:'#eae5ec'}} />
               </div>
               <div>
                 <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Location</Label>
-                <Select value={form.locationId || '__none__'} onValueChange={v => setForm({...form, locationId: v === '__none__' ? null : v})}>
-                  <SelectTrigger style={{background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.12)', color:'#eae5ec'}}>
-                    <SelectValue placeholder="Select..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">None</SelectItem>
-                    {locations.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <Input value={form.locationId ? getLocName(form.locationId) : 'None'} disabled className="disabled:opacity-70" style={{background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.08)', color:'#eae5ec'}} />
               </div>
             </div>
             <div>
@@ -5908,9 +5899,18 @@ function ExtensionsPage({ user }) {
               <SearchableSelect
                 options={employees.map(e => ({ id: e.id, name: e.name }))}
                 value={form.assignedTo || ''}
-                onChange={v => setForm({...form, assignedTo: v || null})}
+                onChange={v => {
+                  const employee = employees.find(item => item.id === v);
+                  setForm({
+                    ...form,
+                    assignedTo: v || null,
+                    departmentId: employee?.department_id || null,
+                    locationId: employee?.location_id || null,
+                  });
+                }}
                 placeholder="Search employee..."
               />
+              <p className="text-xs mt-1.5" style={{color:'rgba(234,229,236,0.4)'}}>Department and location are inherited from the selected employee.</p>
             </div>
             <div>
               <Label className="text-xs mb-1.5 block" style={{color:'rgba(234,229,236,0.7)'}}>Phone Type (optional)</Label>

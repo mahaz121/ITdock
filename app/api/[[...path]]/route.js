@@ -3681,8 +3681,8 @@ export async function POST(request, { params }) {
       id: uuidv4(),
       extensionNumber: normalizedExtension,
       name: assignedEmployee.name || extensionNumber.trim(),
-      departmentId: body.departmentId || null,
-      locationId: body.locationId || null,
+      departmentId: assignedEmployee.department_id || null,
+      locationId: assignedEmployee.location_id || null,
       permission,
       assignedTo: body.assignedTo,
       phoneType,
@@ -4267,13 +4267,10 @@ export async function PUT(request, { params }) {
       const dup = await db.collection('extensions').findOne({ extensionNumber: normalizedExtension, id: { $ne: extId } }, { collation: { locale: 'en', strength: 2 } });
       if (dup) return error(`Extension number "${normalizedExtension}" already exists`, 409);
     }
-    let assignedEmployee = null;
-    if (body.assignedTo !== undefined) {
-      if (!body.assignedTo) return error('assignedTo is required');
-      assignedEmployee = await db.collection('employees').findOne({ id: body.assignedTo });
-      if (!assignedEmployee) return error('Assigned employee not found', 404);
-    }
     const nextAssignedTo = body.assignedTo !== undefined ? body.assignedTo : existing.assignedTo;
+    if (!nextAssignedTo) return error('assignedTo is required');
+    const assignedEmployee = await db.collection('employees').findOne({ id: nextAssignedTo });
+    if (!assignedEmployee) return error('Assigned employee not found', 404);
     const phoneType = body.phoneType !== undefined
       ? (['softphone', 'physical'].includes(body.phoneType) ? body.phoneType : 'none')
       : (existing.phoneType || 'none');
@@ -4297,8 +4294,8 @@ export async function PUT(request, { params }) {
     const updates = {
       extensionNumber: body.extensionNumber?.trim() || existing.extensionNumber,
       name: assignedEmployee?.name || body.name?.trim() || existing.name,
-      departmentId: body.departmentId !== undefined ? (body.departmentId || null) : existing.departmentId,
-      locationId: body.locationId !== undefined ? (body.locationId || null) : existing.locationId,
+      departmentId: assignedEmployee.department_id || null,
+      locationId: assignedEmployee.location_id || null,
       permission: body.permission || existing.permission,
       assignedTo: body.assignedTo !== undefined ? body.assignedTo : existing.assignedTo,
       phoneType,
