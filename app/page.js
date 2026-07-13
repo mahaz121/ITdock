@@ -3234,10 +3234,11 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
     } catch (err) { toast.error(err.message); }
   };
 
-  const getEditCategoryType = () => {
-    const cat = categories.find(c => c.id === assetInlineEditData.category_id || c.id === assetInlineEditData.category);
-    return cat?.category_type || 'STORABLE';
-  };
+  const getEditCategory = () => categories.find(c => c.id === assetInlineEditData.category_id || c.id === assetInlineEditData.category);
+  const getEditCategoryType = () => getEditCategory()?.category_type || 'STORABLE';
+  const getInlineIpAddresses = () => Array.isArray(assetInlineEditData.ipAddresses)
+    ? assetInlineEditData.ipAddresses.join(', ')
+    : (assetInlineEditData.ipAddresses || '');
 
   const getStatusColor = (s) => {
     const colors = { 'In Stock': 'bg-green-100 text-green-800', 'Assigned': 'bg-blue-100 text-blue-800', 'Temporarily Assigned': 'bg-purple-100 text-purple-800', 'Handed Over (Vacation Coverage)': 'bg-orange-100 text-orange-800', 'In Maintenance': 'bg-yellow-100 text-yellow-800', 'Scrapped': 'bg-red-100 text-red-800' };
@@ -3484,6 +3485,10 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
                             <Input className="h-8 text-sm" value={assetInlineEditData.brand || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, brand: e.target.value})} />
                           </div>
                           <div>
+                            <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Vendor</label>
+                            <Input className="h-8 text-sm" value={assetInlineEditData.vendor_name || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, vendor_name: e.target.value})} />
+                          </div>
+                          <div>
                             <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Status</label>
                             <Select value={assetInlineEditData.status || ''} onValueChange={v => setAssetInlineEditData({...assetInlineEditData, status: v})}>
                               <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
@@ -3502,6 +3507,15 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
                             <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Purchase Date</label>
                             <Input className="h-8 text-sm" type="date" value={assetInlineEditData.receive_date || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, receive_date: e.target.value})} />
                           </div>
+                          {['Keyboard', 'Mouse'].includes(getEditCategory()?.name) && (
+                            <div>
+                              <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Connection Type</label>
+                              <Select value={assetInlineEditData.connection_type || 'Wired'} onValueChange={v => setAssetInlineEditData({...assetInlineEditData, connection_type:v})}>
+                                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                                <SelectContent><SelectItem value="Wired">Wired</SelectItem><SelectItem value="Wireless">Wireless</SelectItem></SelectContent>
+                              </Select>
+                            </div>
+                          )}
                           {getEditCategoryType() === 'SUBSCRIPTION' ? (
                             <>
                               <div>
@@ -3514,12 +3528,54 @@ function AssetsList({ user, onViewAsset, billsFilter, onClearBillsFilter, assign
                               </div>
                             </>
                           ) : (
-                            <div>
-                              <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Warranty Expiry</label>
-                              <Input className="h-8 text-sm" type="date" value={assetInlineEditData.warranty_end_date || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, warranty_end_date: e.target.value})} />
-                            </div>
+                            <>
+                              <div>
+                                <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Warranty</label>
+                                <Select value={assetInlineEditData.warranty_applicable || 'N-A'} onValueChange={v => setAssetInlineEditData({...assetInlineEditData, warranty_applicable:v, warranty_end_date:v === 'Yes' ? assetInlineEditData.warranty_end_date : ''})}>
+                                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                                  <SelectContent><SelectItem value="Yes">Yes</SelectItem><SelectItem value="No">No</SelectItem><SelectItem value="N-A">N/A</SelectItem></SelectContent>
+                                </Select>
+                              </div>
+                              {assetInlineEditData.warranty_applicable === 'Yes' && (
+                                <div>
+                                  <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Warranty Expiry</label>
+                                  <Input className="h-8 text-sm" type="date" value={assetInlineEditData.warranty_end_date || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, warranty_end_date: e.target.value})} />
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
+                        {getEditCategory()?.hasSpecs && (
+                          <div className="mb-3 pt-3 border-t" style={{borderColor:'rgba(255,255,255,0.08)'}}>
+                            <div className="flex items-center gap-2 mb-3"><Cpu className="h-4 w-4" style={{color:'#5eead4'}} /><h3 className="text-sm font-semibold" style={{color:'#eae5ec'}}>Hardware Specifications</h3></div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Processor</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.processor || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), processor:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>RAM</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.ram || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), ram:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Storage</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.storage || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), storage:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>GPU</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.gpu || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), gpu:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Operating System</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.os || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), os:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>CPU Cores</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.cores || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), cores:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Bandwidth</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.bandwidth || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), bandwidth:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>IP Address</label><Input className="h-8 text-sm" value={assetInlineEditData.ipAddress || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, ipAddress:e.target.value})} /></div>
+                              <div className="md:col-span-2"><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Additional IPs</label><Input className="h-8 text-sm" value={getInlineIpAddresses()} onChange={e => setAssetInlineEditData({...assetInlineEditData, ipAddresses:e.target.value.split(',').map(value => value.trim()).filter(Boolean)})} placeholder="Comma-separated" /></div>
+                            </div>
+                          </div>
+                        )}
+                        {getEditCategory()?.isIoT && (
+                          <div className="mb-3 pt-3 border-t" style={{borderColor:'rgba(255,255,255,0.08)'}}>
+                            <div className="flex items-center gap-2 mb-3"><Wifi className="h-4 w-4" style={{color:'#5eead4'}} /><h3 className="text-sm font-semibold" style={{color:'#eae5ec'}}>Network / IoT Details</h3></div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>MAC Address</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.macAddress || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), macAddress:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>IP Address</label><Input className="h-8 text-sm" value={assetInlineEditData.ipAddress || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, ipAddress:e.target.value})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>VLAN</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.vlan || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), vlan:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Firmware Version</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.firmware || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), firmware:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Management URL</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.managementUrl || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), managementUrl:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Ports</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.ports || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), ports:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Resolution</label><Input className="h-8 text-sm" value={assetInlineEditData.specs?.resolution || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, specs:{...(assetInlineEditData.specs || {}), resolution:e.target.value}})} /></div>
+                              <div><label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Additional IPs</label><Input className="h-8 text-sm" value={getInlineIpAddresses()} onChange={e => setAssetInlineEditData({...assetInlineEditData, ipAddresses:e.target.value.split(',').map(value => value.trim()).filter(Boolean)})} placeholder="Comma-separated" /></div>
+                            </div>
+                          </div>
+                        )}
                         <div className="mb-3">
                           <label className="text-xs block mb-1" style={{color:'rgba(234,229,236,0.6)'}}>Notes</label>
                           <Textarea className="text-sm" rows={2} value={assetInlineEditData.notes || ''} onChange={e => setAssetInlineEditData({...assetInlineEditData, notes: e.target.value})} placeholder="Optional notes..." />
