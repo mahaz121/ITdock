@@ -908,7 +908,12 @@ function NotificationBell({ onNotificationClick }) {
   const [billingData, setBillingData] = useState({ paid: true, new_billing_date: '', notes: '' });
   const [billingLoading, setBillingLoading] = useState(false);
 
-  useEffect(() => { loadNotifications(); }, []);
+  useEffect(() => {
+    const refresh = () => loadNotifications();
+    refresh();
+    window.addEventListener('itdock:notifications-refresh', refresh);
+    return () => window.removeEventListener('itdock:notifications-refresh', refresh);
+  }, []);
 
   const loadNotifications = async () => {
     try {
@@ -934,7 +939,7 @@ function NotificationBell({ onNotificationClick }) {
       await api.post('assets/billing-update', { asset_id: billingAsset.id, new_billing_date: billingData.new_billing_date, paid: billingData.paid, notes: billingData.notes });
       toast.success(`Billing date updated to ${billingData.new_billing_date}`);
       setBillingDialogOpen(false);
-      loadNotifications();
+      window.dispatchEvent(new Event('itdock:notifications-refresh'));
     } catch (err) { toast.error(err.message); }
     setBillingLoading(false);
   };
@@ -1639,6 +1644,7 @@ function Dashboard({ onNavigate, onNavigateToBills }) {
       toast.success(`Billing date updated to ${billingData.new_billing_date}`);
       setBillingDialogOpen(false);
       loadData();
+      window.dispatchEvent(new Event('itdock:notifications-refresh'));
     } catch (err) { toast.error(err.message); }
     setBillingLoading(false);
   };
@@ -4061,6 +4067,7 @@ function AssetDetail({ assetId, user, onBack, onViewEmployee, onNavigateToEmploy
       toast.success(`Billing date updated to ${billingData.new_billing_date}`);
       setBillingDialogOpen(false);
       loadData();
+      window.dispatchEvent(new Event('itdock:notifications-refresh'));
     } catch (err) { toast.error(err.message); }
     setBillingLoading(false);
   };
