@@ -6599,12 +6599,16 @@ function SmtpSettingsTab() {
 
 function SubscriptionNotificationSettings() {
   const [cfg, setCfg] = useState({ enabled: true, notifyDueSoon: true, notifyPaid: true, primaryEmail: '', ccEmails: [], advanceDays: 7 });
+  const [ccInput, setCcInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api.get('settings/subscription-notifications')
-      .then(data => setCfg(prev => ({ ...prev, ...data, ccEmails: data.ccEmails || [] })))
+      .then(data => {
+        setCfg(prev => ({ ...prev, ...data, ccEmails: data.ccEmails || [] }));
+        setCcInput((data.ccEmails || []).join(', '));
+      })
       .catch(err => toast.error(err.message))
       .finally(() => setLoading(false));
   }, []);
@@ -6612,8 +6616,10 @@ function SubscriptionNotificationSettings() {
   const save = async () => {
     setSaving(true);
     try {
-      const saved = await api.post('settings/subscription-notifications', cfg);
+      const ccEmails = ccInput.split(/[,;\n]/).map(value => value.trim()).filter(Boolean);
+      const saved = await api.post('settings/subscription-notifications', { ...cfg, ccEmails });
       setCfg(prev => ({ ...prev, ...saved, ccEmails: saved.ccEmails || [] }));
+      setCcInput((saved.ccEmails || []).join(', '));
       toast.success('Subscription notification settings saved');
     } catch (err) {
       toast.error(err.message);
@@ -6644,7 +6650,7 @@ function SubscriptionNotificationSettings() {
           </div>
           <div>
             <Label>CC recipients</Label>
-            <Input value={(cfg.ccEmails || []).join(', ')} onChange={event => setCfg({ ...cfg, ccEmails: event.target.value.split(/[,;]/).map(value => value.trim()).filter(Boolean) })} placeholder="manager@company.com, finance@company.com" disabled={!cfg.enabled} />
+            <Input value={ccInput} onChange={event => setCcInput(event.target.value)} placeholder="manager@company.com, finance@company.com" disabled={!cfg.enabled} />
             <p className="text-xs mt-1.5" style={{color:'rgba(234,229,236,0.45)'}}>Separate multiple email addresses with commas.</p>
           </div>
           <div>
