@@ -40,5 +40,6 @@ test('password hashes use Argon2id and JWT validation constrains claims', async 
   const decoded = auth.verifyToken(token);
   assert.equal(decoded.iss, 'itdock');
   assert.equal(decoded.aud, 'itdock-api');
-  assert.ok(decoded.exp - decoded.iat <= 15 * 60);
+  assert.ok(decoded.exp - decoded.iat <= 30 * 24 * 60 * 60);
+  assert.ok(decoded.exp - decoded.iat >= 29 * 24 * 60 * 60);
 });

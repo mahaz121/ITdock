@@ -423,7 +423,7 @@ function MahazLandingPage({ onLogin }) {
     { icon: Monitor, title: 'Asset Tracking', desc: 'Track every physical asset from purchase to retirement — serial numbers, warranties, locations, all in one view.' },
     { icon: Users, title: 'Employee Management', desc: 'Link assets to people. See who has what, handle vacation coverage, and manage resignations cleanly.' },
     { icon: Bell, title: 'Smart Alerts', desc: 'Get notified before warranties expire, subscriptions renew, or billing dates hit. Never miss a deadline.' },
-    { icon: ShieldCheck, title: 'Enterprise Security', desc: 'TOTP 2FA, session management, account lockout, idle timeout, and scoped API keys.' },
+    { icon: ShieldCheck, title: 'Enterprise Security', desc: 'TOTP 2FA, persistent session management, account lockout, and scoped API keys.' },
     { icon: Layers, title: 'Category System', desc: 'Physical, subscription, and consumable assets each behave differently. ITdock knows the difference.' },
     { icon: Download, title: 'Excel Export', desc: 'Export any view to a clean Excel file in one click. Your data, your format.' },
     { icon: Package, title: 'Asset Addons', desc: 'Track addon services per asset — billing cycles, renewal dates, and status in one place.' },
@@ -6590,6 +6590,84 @@ function SmtpSettingsTab() {
   );
 }
 
+function SubscriptionNotificationSettings() {
+  const [cfg, setCfg] = useState({ enabled: true, notifyDueSoon: true, notifyPaid: true, primaryEmail: '', ccEmails: [], advanceDays: 7 });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.get('settings/subscription-notifications')
+      .then(data => setCfg(prev => ({ ...prev, ...data, ccEmails: data.ccEmails || [] })))
+      .catch(err => toast.error(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const saved = await api.post('settings/subscription-notifications', cfg);
+      setCfg(prev => ({ ...prev, ...saved, ccEmails: saved.ccEmails || [] }));
+      toast.success('Subscription notification settings saved');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="p-8"><ITdockPageLoader label="Loading notification settings" /></div>;
+
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle className="text-base">Subscription Email Notifications</CardTitle>
+        <CardDescription>Choose where renewal reminders and payment confirmations are delivered. Outgoing mail uses the SMTP configuration in the Email tab.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5 max-w-2xl">
+        <label className="flex items-center gap-3 text-sm cursor-pointer">
+          <Checkbox checked={cfg.enabled} onCheckedChange={checked => setCfg({ ...cfg, enabled: checked === true })} />
+          Enable subscription email notifications
+        </label>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label>Primary recipient email *</Label>
+            <Input type="email" value={cfg.primaryEmail} onChange={event => setCfg({ ...cfg, primaryEmail: event.target.value })} placeholder="accounts@company.com" disabled={!cfg.enabled} />
+            <p className="text-xs mt-1.5" style={{color:'rgba(234,229,236,0.45)'}}>All subscription messages are sent to this address.</p>
+          </div>
+          <div>
+            <Label>CC recipients</Label>
+            <Input value={(cfg.ccEmails || []).join(', ')} onChange={event => setCfg({ ...cfg, ccEmails: event.target.value.split(/[,;]/).map(value => value.trim()).filter(Boolean) })} placeholder="manager@company.com, finance@company.com" disabled={!cfg.enabled} />
+            <p className="text-xs mt-1.5" style={{color:'rgba(234,229,236,0.45)'}}>Separate multiple email addresses with commas.</p>
+          </div>
+          <div>
+            <Label>Notify before renewal</Label>
+            <div className="flex items-center gap-2">
+              <Input type="number" min="1" max="90" value={cfg.advanceDays} onChange={event => setCfg({ ...cfg, advanceDays: event.target.value })} disabled={!cfg.enabled || !cfg.notifyDueSoon} />
+              <span className="text-sm whitespace-nowrap" style={{color:'rgba(234,229,236,0.55)'}}>days</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-lg p-4" style={{background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.07)'}}>
+          <label className="flex items-start gap-3 text-sm cursor-pointer">
+            <Checkbox checked={cfg.notifyDueSoon} onCheckedChange={checked => setCfg({ ...cfg, notifyDueSoon: checked === true })} disabled={!cfg.enabled} />
+            <span><span className="block font-medium">Subscription due soon</span><span className="text-xs" style={{color:'rgba(234,229,236,0.5)'}}>Send a reminder once when an active subscription enters the configured renewal window.</span></span>
+          </label>
+          <label className="flex items-start gap-3 text-sm cursor-pointer">
+            <Checkbox checked={cfg.notifyPaid} onCheckedChange={checked => setCfg({ ...cfg, notifyPaid: checked === true })} disabled={!cfg.enabled} />
+            <span><span className="block font-medium">Payment confirmed</span><span className="text-xs" style={{color:'rgba(234,229,236,0.5)'}}>Send a confirmation after a subscription is marked as paid and its next billing date is saved.</span></span>
+          </label>
+        </div>
+
+        <Button onClick={save} disabled={saving || (cfg.enabled && !cfg.primaryEmail)} className="bg-[#0d9488] hover:bg-[#0f766e]">
+          {saving ? 'Saving…' : 'Save Notification Settings'}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // Settings Page
 function SettingsPage({ user }) {
   const [activeSettingsTab, setActiveSettingsTab] = useState('general');
@@ -6606,11 +6684,9 @@ function SettingsPage({ user }) {
           {canSeeLogs && <TabsTrigger value="logs"><FileText className="h-4 w-4 mr-2" />System Logs</TabsTrigger>}
         </TabsList>
         <TabsContent value="general">
-          <Card className="mt-4">
-            <CardContent className="pt-6">
-              <p className="text-sm" style={{color:'rgba(234,229,236,0.5)'}}>General settings will be available here.</p>
-            </CardContent>
-          </Card>
+          {isSuperAdmin ? <SubscriptionNotificationSettings /> : (
+            <Card className="mt-4"><CardContent className="pt-6"><p className="text-sm" style={{color:'rgba(234,229,236,0.5)'}}>General settings are managed by a Super Admin.</p></CardContent></Card>
+          )}
         </TabsContent>
         {isSuperAdmin && (
           <TabsContent value="email">
@@ -7036,76 +7112,6 @@ function AboutDeveloperPage() {
   );
 }
 
-// Idle timeout watcher — 30 min inactivity → warning → 60s countdown → auto-logout
-const IDLE_MINUTES = 30;
-const WARN_SECONDS = 60;
-
-function IdleTimeoutWatcher({ onLogout }) {
-  const [showWarning, setShowWarning] = useState(false);
-  const [countdown, setCountdown] = useState(WARN_SECONDS);
-  const idleTimer = React.useRef(null);
-  const countdownTimer = React.useRef(null);
-
-  const resetIdle = useCallback(() => {
-    if (showWarning) return;
-    clearTimeout(idleTimer.current);
-    idleTimer.current = setTimeout(() => {
-      setShowWarning(true);
-      setCountdown(WARN_SECONDS);
-    }, IDLE_MINUTES * 60 * 1000);
-  }, [showWarning]);
-
-  useEffect(() => {
-    const events = ['mousemove', 'keydown', 'click', 'touchstart', 'scroll'];
-    events.forEach(e => window.addEventListener(e, resetIdle, { passive: true }));
-    resetIdle();
-    return () => {
-      events.forEach(e => window.removeEventListener(e, resetIdle));
-      clearTimeout(idleTimer.current);
-      clearInterval(countdownTimer.current);
-    };
-  }, [resetIdle]);
-
-  useEffect(() => {
-    if (showWarning) {
-      countdownTimer.current = setInterval(() => {
-        setCountdown(c => {
-          if (c <= 1) { clearInterval(countdownTimer.current); onLogout(); return 0; }
-          return c - 1;
-        });
-      }, 1000);
-    } else {
-      clearInterval(countdownTimer.current);
-    }
-    return () => clearInterval(countdownTimer.current);
-  }, [showWarning, onLogout]);
-
-  const stayLoggedIn = () => {
-    setShowWarning(false);
-    setCountdown(WARN_SECONDS);
-    resetIdle();
-  };
-
-  if (!showWarning) return null;
-
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{background:'rgba(0,0,0,0.4)', backdropFilter:'blur(4px)'}}>
-      <div className="w-full max-w-sm rounded-[18px] p-8 text-center" style={{background:'#050810', border:'1px solid rgba(255,255,255,0.08)', boxShadow:'0 8px 48px rgba(0,0,0,0.48)'}}>
-        <div className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center" style={{background:'rgba(251,146,60,0.12)', border:'2px solid rgba(255,149,0,0.3)'}}>
-          <Clock className="h-8 w-8" style={{color:'#FF9500'}} />
-        </div>
-        <h2 className="text-xl font-bold mb-2" style={{color:'#eae5ec'}}>Session Expiring</h2>
-        <p className="text-sm mb-4" style={{color:'rgba(234,229,236,0.6)'}}>You've been inactive. You'll be signed out in</p>
-        <div className="text-5xl font-bold mb-6" style={{color: countdown <= 10 ? '#FF3B30' : '#FF9500'}}>{countdown}</div>
-        <div className="flex gap-3">
-          <Button variant="outline" className="flex-1" style={{borderColor:'rgba(255,255,255,0.12)', color:'rgba(234,229,236,0.6)'}} onClick={onLogout}>Sign Out</Button>
-          <Button className="flex-1 bg-[#0d9488] hover:bg-[#0f766e] text-white" onClick={stayLoggedIn}>Stay Logged In</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -7196,7 +7202,6 @@ export default function App() {
   return (
     <ConfirmProvider>
     <div className="flex h-screen overflow-hidden" style={{background: '#0a0e17', color:'#eae5ec'}}>
-      <IdleTimeoutWatcher onLogout={handleLogout} />
       {user.is_default_password && <ForcePasswordChangeModal onPasswordChanged={() => setUser({...user, is_default_password: false})} />}
       <Sidebar activeTab={activeTab} setActiveTab={navigateToTab} user={user} onLogout={handleLogout} />
       <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">

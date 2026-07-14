@@ -21,7 +21,7 @@ function withAuthCookie(response, token) {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     path: '/',
-    maxAge: 15 * 60,
+    maxAge: 30 * 24 * 60 * 60,
   });
   return response;
 }
@@ -206,6 +206,122 @@ function sanitizeBody(obj) {
 
 function safeRegex(value) {
   return String(value || '').slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeNotificationEmails(value) {
+  const values = Array.isArray(value) ? value : String(value || '').split(/[,;]/);
+  return [...new Set(values.map(item => String(item).trim().toLowerCase()).filter(Boolean))];
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+}
+
+async function getSubscriptionNotificationSettings(db) {
+  const doc = await db.collection('settings').findOne({ key: 'subscription_notifications' });
+  const value = doc?.value || {};
+  return {
+    enabled: value.enabled !== false,
+    notifyDueSoon: value.notifyDueSoon !== false,
+    notifyPaid: value.notifyPaid !== false,
+    primaryEmail: String(value.primaryEmail || '').trim().toLowerCase(),
+    ccEmails: normalizeNotificationEmails(value.ccEmails),
+    advanceDays: Math.min(90, Math.max(1, Number.parseInt(value.advanceDays, 10) || 7)),
+  };
+}
+
+async function sendSubscriptionDueNotifications(db) {
+  const settings = await getSubscriptionNotificationSettings(db);
+  if (!settings.enabled || !settings.notifyDueSoon || !settings.primaryEmail) return;
+
+  const today = new Date().toISOString().split('T')[0];
+  const through = new Date(Date.now() + settings.advanceDays * 86400000).toISOString().split('T')[0];
+  const subscriptionCategories = await db.collection('categories').find(
+    { category_type: 'SUBSCRIPTION' }, { projection: { id: 1 } }
+  ).toArray();
+  const categoryIds = subscriptionCategories.map(category => category.id);
+  const subscriptions = await db.collection('assets').find({
+    archived: { $ne: true },
+    status: { $nin: ['Scrapped', 'Canceled'] },
+    $or: [
+      { category_type: 'SUBSCRIPTION' },
+      { asset_type: 'Subscription' },
+      ...(categoryIds.length ? [{ category: { $in: categoryIds } }] : []),
+    ],
+  }).toArray();
+
+  const due = subscriptions.map(asset => ({ asset, dueDate: asset.renewal_date || asset.expiry_date }))
+    .filter(item => item.dueDate && item.dueDate >= today && item.dueDate <= through);
+  const claimed = [];
+  for (const item of due) {
+    const id = `subscription_due:${item.asset.id}:${item.dueDate}`;
+    try {
+      await db.collection('notification_deliveries').insertOne({ _id: id, type: 'subscription_due', asset_id: item.asset.id, due_date: item.dueDate, created_at: new Date().toISOString() });
+      claimed.push({ ...item, deliveryId: id });
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+    }
+  }
+  if (!claimed.length) return;
+
+  const rows = claimed.map(({ asset, dueDate }) => {
+    const days = Math.ceil((new Date(`${dueDate}T00:00:00Z`) - new Date(`${today}T00:00:00Z`)) / 86400000);
+    return `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${escapeHtml(asset.asset_tag || asset.id)}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${escapeHtml(asset.vendor_name || asset.brand || '—')}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${escapeHtml(dueDate)}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${days === 0 ? 'Today' : `${days} day${days === 1 ? '' : 's'}`}</td></tr>`;
+  }).join('');
+  try {
+    const result = await sendMail({
+      to: settings.primaryEmail,
+      cc: settings.ccEmails,
+      subject: `[ITdock] ${claimed.length} subscription${claimed.length === 1 ? '' : 's'} due soon`,
+      text: claimed.map(({ asset, dueDate }) => `${asset.asset_tag || asset.id} is due on ${dueDate}`).join('\n'),
+      html: `<div style="font-family:system-ui,sans-serif;color:#111827"><h2>Subscriptions due soon</h2><p>The following subscriptions are due within ${settings.advanceDays} days.</p><table style="border-collapse:collapse;width:100%"><thead><tr><th style="padding:8px;text-align:left">Subscription</th><th style="padding:8px;text-align:left">Vendor</th><th style="padding:8px;text-align:left">Due date</th><th style="padding:8px;text-align:left">Remaining</th></tr></thead><tbody>${rows}</tbody></table></div>`,
+    });
+    if (result.skipped) await db.collection('notification_deliveries').deleteMany({ _id: { $in: claimed.map(item => item.deliveryId) } });
+  } catch (error) {
+    await db.collection('notification_deliveries').deleteMany({ _id: { $in: claimed.map(item => item.deliveryId) } });
+    throw error;
+  }
+}
+
+async function sendSubscriptionPaidNotification(db, asset, previousDate, newDate, paidBy, notes) {
+  const settings = await getSubscriptionNotificationSettings(db);
+  if (!settings.enabled || !settings.notifyPaid || !settings.primaryEmail) return;
+  const deliveryId = `subscription_paid:${asset.id}:${newDate}`;
+  try {
+    await db.collection('notification_deliveries').insertOne({ _id: deliveryId, type: 'subscription_paid', asset_id: asset.id, renewal_date: newDate, created_at: new Date().toISOString() });
+  } catch (error) {
+    if (error?.code === 11000) return;
+    throw error;
+  }
+  try {
+    const label = asset.asset_tag || asset.id;
+    const result = await sendMail({
+      to: settings.primaryEmail,
+      cc: settings.ccEmails,
+      subject: `[ITdock] Payment confirmed — ${label}`,
+      text: `Payment was confirmed for ${label}. Previous billing date: ${previousDate || 'none'}. Next billing date: ${newDate}. Confirmed by: ${paidBy || 'ITdock user'}.${notes ? ` Notes: ${notes}` : ''}`,
+      html: `<div style="font-family:system-ui,sans-serif;color:#111827"><h2>Subscription payment confirmed</h2><p><strong>${escapeHtml(label)}</strong> has been marked as paid.</p><p>Previous billing date: ${escapeHtml(previousDate || 'none')}<br>Next billing date: ${escapeHtml(newDate)}<br>Confirmed by: ${escapeHtml(paidBy || 'ITdock user')}</p>${notes ? `<p>Notes: ${escapeHtml(notes)}</p>` : ''}</div>`,
+    });
+    if (result.skipped) await db.collection('notification_deliveries').deleteOne({ _id: deliveryId });
+  } catch (error) {
+    await db.collection('notification_deliveries').deleteOne({ _id: deliveryId });
+    throw error;
+  }
+}
+
+function startSubscriptionNotificationScheduler(db) {
+  if (globalThis.__itdockSubscriptionNotificationTimer) return;
+  const check = () => sendSubscriptionDueNotifications(db).catch(error => {
+    console.error('[ITdock subscription scheduler] Notification check failed:', error);
+  });
+  check();
+  const timer = setInterval(check, 6 * 60 * 60 * 1000);
+  timer.unref?.();
+  globalThis.__itdockSubscriptionNotificationTimer = timer;
 }
 
 // ---- Session helpers ----
@@ -582,13 +698,14 @@ async function initializeDatabase(db) {
     })));
   }
 
-  // Purge sessions older than 7 days (fire and forget)
-  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // Purge sessions after the same 30-day inactivity window as the auth cookie.
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   db.collection('sessions').deleteMany({ last_active: { $lt: cutoff } }).catch(() => {});
   // Purge stale login_attempts records older than 1 hour that aren't locked
   const attemptsCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   db.collection('login_attempts').deleteMany({ last_attempt: { $lt: attemptsCutoff }, locked_until: null }).catch(() => {});
   await ensureUniqueIndexes(db);
+  startSubscriptionNotificationScheduler(db);
 }
 
 let databaseInitializationPromise = null;
@@ -987,6 +1104,13 @@ export async function GET(request, { params }) {
     }
 
     const sevenDaysFromNow = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    // Deliver each configured subscription reminder once when it enters the alert window.
+    try {
+      await sendSubscriptionDueNotifications(db);
+    } catch (mailError) {
+      console.error('[ITdock subscription due] Failed to send notification:', mailError);
+    }
 
     // Warranty expiry approaching (within 7 days) - exclude archived
     const warrantyExpiring = await db.collection('assets').find({
@@ -1831,6 +1955,12 @@ export async function GET(request, { params }) {
   if (route === 'settings/audit-schedule') {
     const doc = await db.collection('settings').findOne({ key: 'audit_schedule' });
     return json({ intervalMonths: doc?.value?.intervalMonths || 2, advanceDays: doc?.value?.advanceDays ?? 7 });
+  }
+
+  // GET /api/settings/subscription-notifications — email recipients and event preferences
+  if (route === 'settings/subscription-notifications') {
+    if (user.role !== 'super_admin') return error('Forbidden', 403);
+    return json(await getSubscriptionNotificationSettings(db));
   }
 
   // GET /api/audits — list all audits with optional filters
@@ -2702,6 +2832,15 @@ export async function POST(request, { params }) {
       `Billing date updated from ${previousDate || 'none'} to ${new_billing_date}${notes ? '. Notes: ' + notes : ''}`,
       user.id, user.name
     );
+    const assetCategory = asset.category ? await db.collection('categories').findOne({ id: asset.category }, { projection: { category_type: 1 } }) : null;
+    const isSubscription = asset.category_type === 'SUBSCRIPTION' || asset.asset_type === 'Subscription' || assetCategory?.category_type === 'SUBSCRIPTION';
+    if (paid !== false && isSubscription) {
+      try {
+        await sendSubscriptionPaidNotification(db, asset, previousDate, new_billing_date, user.name, notes || '');
+      } catch (mailError) {
+        console.error('[ITdock subscription payment] Failed to send notification:', mailError);
+      }
+    }
     return json({ success: true, new_billing_date });
   }
 
@@ -3835,6 +3974,37 @@ export async function POST(request, { params }) {
     await db.collection('assets').updateOne({ id: assetId }, { $push: { addons: addon } });
     await logAudit(db, user.id, 'ADD_ADDON', 'asset', assetId, { addonId: addon.id, name: addon.name });
     return json({ success: true, addon });
+  }
+
+  // POST /api/settings/subscription-notifications — save recipients and event preferences
+  if (route === 'settings/subscription-notifications') {
+    if (user.role !== 'super_admin') return error('Forbidden', 403);
+    const body = await request.json();
+    const primaryEmail = String(body.primaryEmail || '').trim().toLowerCase();
+    const ccEmails = normalizeNotificationEmails(body.ccEmails);
+    if (primaryEmail && !EMAIL_PATTERN.test(primaryEmail)) return error('Enter a valid primary notification email address');
+    if (ccEmails.some(email => !EMAIL_PATTERN.test(email))) return error('One or more CC email addresses are invalid');
+    if (body.enabled !== false && !primaryEmail) return error('Primary notification email is required when notifications are enabled');
+    const value = {
+      enabled: body.enabled !== false,
+      notifyDueSoon: body.notifyDueSoon !== false,
+      notifyPaid: body.notifyPaid !== false,
+      primaryEmail,
+      ccEmails,
+      advanceDays: Math.min(90, Math.max(1, Number.parseInt(body.advanceDays, 10) || 7)),
+    };
+    await db.collection('settings').updateOne(
+      { key: 'subscription_notifications' },
+      { $set: { key: 'subscription_notifications', value, updated_at: new Date().toISOString(), updated_by: user.id } },
+      { upsert: true }
+    );
+    await logAudit(db, user.id, 'UPDATE', 'settings', 'subscription_notifications', { enabled: value.enabled, notifyDueSoon: value.notifyDueSoon, notifyPaid: value.notifyPaid, advanceDays: value.advanceDays, primaryEmail: primaryEmail ? '[configured]' : '', ccCount: ccEmails.length });
+    try {
+      await sendSubscriptionDueNotifications(db);
+    } catch (mailError) {
+      console.error('[ITdock subscription settings] Initial notification check failed:', mailError);
+    }
+    return json({ success: true, ...value });
   }
 
   // POST /api/settings/smtp — save SMTP config
