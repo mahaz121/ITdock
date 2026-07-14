@@ -462,6 +462,64 @@ async function logActivity(db, assetId, action, details, userId, userName) {
   });
 }
 
+async function returnEmployeeFromVacation(db, employeeId, user) {
+  const employee = await db.collection('employees').findOne({ id: employeeId });
+  if (!employee) throw Object.assign(new Error('Employee not found'), { status: 404 });
+
+  const activeHandovers = await db.collection('vacation_handovers').find({
+    status: 'active',
+    $or: [{ originalEmployeeId: employeeId }, { original_employee_id: employeeId }]
+  }).toArray();
+  const legacyAssignments = await db.collection('assignments').find({
+    original_employee_id: employeeId,
+    assignment_type: 'Vacation Handover',
+    unassigned_date: null
+  }).toArray();
+  const assetIds = [...new Set([
+    ...activeHandovers.map(handover => handover.asset_id),
+    ...legacyAssignments.map(assignment => assignment.asset_id)
+  ].filter(Boolean))];
+  const returnedAt = new Date().toISOString();
+  const returnedDate = returnedAt.split('T')[0];
+
+  for (const assetId of assetIds) {
+    await db.collection('assignments').updateMany(
+      { asset_id: assetId, unassigned_date: null },
+      { $set: { unassigned_date: returnedAt, unassigned_by: user.id } }
+    );
+    await db.collection('assignments').insertOne({
+      id: uuidv4(), asset_id: assetId, employee_id: employeeId,
+      assigned_date: returnedDate, unassigned_date: null,
+      assignment_type: 'Normal', original_employee_id: null, custody_docs: [],
+      assigned_by: user.id
+    });
+    await db.collection('assets').updateOne(
+      { id: assetId },
+      { $set: { status: 'Assigned', assigned_to: employeeId, vacation_remote: false, updated_at: returnedAt } }
+    );
+    await logActivity(db, assetId, 'RETURNED_TO_OWNER', `Returned to ${employee.name} after vacation`, user.id, user.name);
+  }
+
+  await db.collection('vacation_handovers').updateMany(
+    { status: 'active', $or: [{ originalEmployeeId: employeeId }, { original_employee_id: employeeId }] },
+    { $set: { status: 'returned', returnedAt, returned_at: returnedAt } }
+  );
+  await db.collection('employees').updateOne(
+    { id: employeeId },
+    { $set: {
+      status: 'Active',
+      vacation_start_date: null,
+      vacation_end_date: null,
+      'vacation_status.onVacation': false,
+      'vacation_status.vacationStart': null,
+      'vacation_status.vacationEnd': null,
+      'vacation_status.returnedAt': returnedAt
+    } }
+  );
+  await logAudit(db, user.id, 'RETURN_TO_WORK', 'employee', employeeId, { asset_count: assetIds.length });
+  return { employee, assetCount: assetIds.length };
+}
+
 // Asset audit checklist defaults
 const DEFAULT_CHECKLIST = [
   'Device powers on correctly',
@@ -1874,7 +1932,7 @@ export async function GET(request, { params }) {
     const handovers = await db.collection('vacation_handovers').find({ status: 'returned' }).sort({ returned_at: -1, created_at: -1 }).toArray();
     const enriched = await Promise.all(handovers.map(async h => {
       const asset = await db.collection('assets').findOne({ id: h.asset_id });
-      const employee = await db.collection('employees').findOne({ id: h.original_employee_id });
+      const employee = await db.collection('employees').findOne({ id: h.originalEmployeeId || h.original_employee_id });
       const custodian = h.tempEmployeeId ? await db.collection('employees').findOne({ id: h.tempEmployeeId }) : null;
       return { ...h, asset_tag: asset?.asset_tag, employee_name: employee?.name, custodian_name: custodian?.name };
     }));
@@ -1887,7 +1945,7 @@ export async function GET(request, { params }) {
     const handovers = await db.collection('vacation_handovers').find({ status: 'active' }).sort({ created_at: -1 }).toArray();
     const enriched = await Promise.all(handovers.map(async h => {
       const asset = await db.collection('assets').findOne({ id: h.asset_id });
-      const employee = await db.collection('employees').findOne({ id: h.originalEmployeeId });
+      const employee = await db.collection('employees').findOne({ id: h.originalEmployeeId || h.original_employee_id });
       const custodian = h.tempEmployeeId ? await db.collection('employees').findOne({ id: h.tempEmployeeId }) : null;
       return { ...h, asset_tag: asset?.asset_tag, employee_name: employee?.name, custodian_name: custodian?.name };
     }));
@@ -3061,63 +3119,10 @@ export async function POST(request, { params }) {
   // Return vacation assets to original owner
   if (route === 'assignments/return-from-vacation') {
     if (!canAccess(user.role, 'assignments')) return error('Forbidden', 403);
-    
-    const body = await request.json();
-    const { employee_id } = body;
-    
+    const { employee_id } = await request.json();
     if (!employee_id) return error('Employee ID required');
-    
-    // Find all vacation handover assignments for this employee's assets
-    const vacationAssignments = await db.collection('assignments').find({
-      original_employee_id: employee_id,
-      assignment_type: 'Vacation Handover',
-      unassigned_date: null
-    }).toArray();
-    
-    const employee = await db.collection('employees').findOne({ id: employee_id });
-    
-    for (const assignment of vacationAssignments) {
-      // Close vacation assignment
-      await db.collection('assignments').updateOne(
-        { id: assignment.id },
-        { $set: { unassigned_date: new Date().toISOString().split('T')[0] } }
-      );
-      
-      // Create new assignment back to original owner
-      const newAssignment = {
-        id: uuidv4(),
-        asset_id: assignment.asset_id,
-        employee_id: employee_id,
-        assigned_date: new Date().toISOString().split('T')[0],
-        unassigned_date: null,
-        assignment_type: 'Normal',
-        original_employee_id: null,
-        custody_docs: []
-      };
-      
-      await db.collection('assignments').insertOne(newAssignment);
-      await db.collection('assets').updateOne(
-        { id: assignment.asset_id },
-        { $set: { status: 'Assigned', assigned_to: employee_id } }
-      );
-      
-      await db.collection('assets').updateOne({ id: assignment.asset_id }, { $set: { vacation_remote: false } });
-      await logActivity(db, assignment.asset_id, 'RETURNED_TO_OWNER', `Returned to ${employee?.name} after vacation`, user.id, user.name);
-    }
-
-    // Mark all active vacation handovers for this employee as returned
-    await db.collection('vacation_handovers').updateMany(
-      { originalEmployeeId: employee_id, status: 'active' },
-      { $set: { status: 'returned', returnedAt: new Date().toISOString() } }
-    );
-
-    // Update employee status
-    await db.collection('employees').updateOne(
-      { id: employee_id },
-      { $set: { status: 'Active', vacation_start_date: null, vacation_end_date: null } }
-    );
-
-    return json({ success: true, count: vacationAssignments.length });
+    const result = await returnEmployeeFromVacation(db, employee_id, user);
+    return json({ success: true, count: result.assetCount, employee_id });
   }
 
   // ============ CUSTODY DOCUMENTS ============
@@ -3750,28 +3755,17 @@ export async function POST(request, { params }) {
     return json({ success: true });
   }
 
-  // Return asset from vacation handover
+  // Return to work from any vacation handover entry. This is intentionally an
+  // employee-level operation so every screen resolves the same vacation state.
   if (pathSegments[0] === 'vacation' && pathSegments[1] === 'handover' && pathSegments[3] === 'return' && pathSegments.length === 4) {
     if (!['super_admin', 'it_admin'].includes(user.role)) return error('Forbidden', 403);
     const handoverId = pathSegments[2];
     const handover = await db.collection('vacation_handovers').findOne({ id: handoverId });
     if (!handover) return error('Handover not found', 404);
-
-    await db.collection('assignments').updateMany(
-      { asset_id: handover.asset_id, unassigned_date: null },
-      { $set: { unassigned_date: new Date().toISOString(), unassigned_by: user.id } }
-    );
-    await db.collection('assignments').insertOne({
-      id: uuidv4(), asset_id: handover.asset_id, employee_id: handover.originalEmployeeId,
-      assignment_type: 'Normal', assigned_date: new Date().toISOString(), assigned_by: user.id, unassigned_date: null
-    });
-    await db.collection('assets').updateOne({ id: handover.asset_id }, {
-      $set: { status: 'Assigned', assigned_to: handover.originalEmployeeId, vacation_remote: false }
-    });
-    await db.collection('vacation_handovers').updateOne({ id: handoverId }, {
-      $set: { status: 'returned', returnedAt: new Date().toISOString() }
-    });
-    return json({ success: true });
+    const employeeId = handover.originalEmployeeId || handover.original_employee_id;
+    if (!employeeId) return error('Vacation handover has no original employee');
+    const result = await returnEmployeeFromVacation(db, employeeId, user);
+    return json({ success: true, count: result.assetCount, employee_id: employeeId });
   }
 
   // Extend vacation

@@ -2689,8 +2689,8 @@ function EmployeeDetail({ employeeId, user, onBack, onViewAsset }) {
         toast.success('Vacation extended');
       } else {
         await api.post('assignments/return-from-vacation', { employee_id: employeeId });
-        await api.put(`employees/${employeeId}`, { status: 'Active', vacation_status: { onVacation: false } });
-        toast.success('Returned from vacation — assets reassigned');
+        window.dispatchEvent(new Event('itdock:notifications-refresh'));
+        toast.success('Returned to work — vacation and assets updated');
       }
       setReturnVacationDialogOpen(false);
       loadData();
@@ -2983,12 +2983,13 @@ function PendingApprovalsPage({ user, onViewAsset, onViewEmployee }) {
     } catch (err) { toast.error(err.message); }
   };
 
-  const handleMarkReturned = async (handoverId) => {
-    const ok = await confirm({ title: 'Mark as Returned', description: 'Mark this asset as returned from vacation?', confirmLabel: 'Mark Returned', variant: 'primary' });
+  const handleReturnToWork = async (employeeId, employeeName) => {
+    const ok = await confirm({ title: 'Return to Work', description: `End ${employeeName || 'this employee'}'s vacation and return all vacation assets to them? This updates the employee, every handover, and the dashboard together.`, confirmLabel: 'Return to Work', variant: 'primary' });
     if (!ok) return;
     try {
-      await api.post(`vacation/handover/${handoverId}/return`, {});
-      toast.success('Asset returned');
+      await api.post('assignments/return-from-vacation', { employee_id: employeeId });
+      window.dispatchEvent(new Event('itdock:notifications-refresh'));
+      toast.success('Returned to work — vacation and all assets updated');
       loadData();
     } catch (err) { toast.error(err.message); }
   };
@@ -3065,11 +3066,14 @@ function PendingApprovalsPage({ user, onViewAsset, onViewEmployee }) {
                           {emp.vacation_start} → {emp.vacation_end} · {emp.handovers.length} asset(s)
                         </p>
                       </div>
-                      {canEdit && (
-                        <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => { setExtendEmp({ id: emp.employee_id, name: emp.employee_name }); setExtendDate(''); setExtendReason(''); setExtendOpen(true); }}>
+                      {canEdit && <div className="flex items-center gap-2 shrink-0">
+                        <Button size="sm" className="h-7 text-xs bg-[#0d9488] hover:bg-[#0f766e]" onClick={() => handleReturnToWork(emp.employee_id, emp.employee_name)}>
+                          Return to Work
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setExtendEmp({ id: emp.employee_id, name: emp.employee_name }); setExtendDate(''); setExtendReason(''); setExtendOpen(true); }}>
                           Extend Vacation
                         </Button>
-                      )}
+                      </div>}
                     </div>
                     {/* Asset rows */}
                     <div className="space-y-2">
@@ -3107,10 +3111,6 @@ function PendingApprovalsPage({ user, onViewAsset, onViewEmployee }) {
                                   <span className="text-xs font-medium" style={{color:'#34C759'}}>Received ✓</span>
                                 )}
                                 {isEmployee && !h.doc_uploaded && <span className="text-xs" style={{color:'rgba(234,229,236,0.3)'}}>Form required</span>}
-                                {/* Return button */}
-                                <Button size="sm" variant="ghost" className="h-6 text-xs px-2" style={{color:'#34C759', borderColor:'rgba(52,199,89,0.3)'}} onClick={() => handleMarkReturned(h.id)}>
-                                  Return
-                                </Button>
                               </div>
                             )}
                           </div>
